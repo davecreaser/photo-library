@@ -241,6 +241,7 @@ function registerIpc(): void {
   ipcMain.handle('albums:list', () => db.listAlbums())
   ipcMain.handle('albums:create', (_e, name: string, parentId: number | null) => db.createAlbum(name, parentId))
   ipcMain.handle('albums:rename', (_e, id: number, name: string) => db.renameAlbum(id, name))
+  ipcMain.handle('albums:move', (_e, id: number, parentId: number | null) => db.moveAlbum(id, parentId))
   ipcMain.handle('albums:delete', (_e, id: number) => db.deleteAlbum(id))
   ipcMain.handle('albums:add', (_e, albumId: number, ids: number[]) => db.addToAlbum(albumId, ids))
   ipcMain.handle('albums:remove', (_e, albumId: number, ids: number[]) => db.removeFromAlbum(albumId, ids))

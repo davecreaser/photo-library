@@ -8,6 +8,8 @@ name: Agent
 #   "approved, no spec"  -> small change: skip the spec gate and build straight away
 #   "revise: <changes>"  -> on a spec-ready issue: update the spec/design and post again
 #   "go"                 -> on a spec-ready issue: build, review, QA, open a PR, watch CI
+#   "update"             -> on a PR: merge main into its branch, resolve conflicts, check, watch CI
+#                           (several features can be in flight at once; whichever merges second needs this)
 # Only the repository owner's issues and comments do anything. The agent never merges or pushes to main.
 
 on:
@@ -18,9 +20,7 @@ on:
 
 jobs:
   route:
-    if: >-
-      !github.event.issue.pull_request &&
-      github.event.sender.login == github.repository_owner
+    if: github.event.sender.login == github.repository_owner
     runs-on: ubuntu-latest
     outputs:
       stage: ${{ steps.pick.outputs.stage }}
@@ -33,12 +33,15 @@ jobs:
           IDEA: ${{ contains(github.event.issue.labels.*.name, 'idea') }}
           SPEC_READY: ${{ contains(github.event.issue.labels.*.name, 'spec-ready') }}
           BUSY: ${{ contains(github.event.issue.labels.*.name, 'building') }}
+          IS_PR: ${{ github.event.issue.pull_request && 'true' || 'false' }}
         run: |
           first=$(printf '%s' "$BODY" | head -n1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
           stage=none
           if [ "$EVENT" = "issues" ]; then
-            if [ -z "$LABELS" ]; then stage=idea; fi
+            if [ -z "$LABELS" ] && [ "$IS_PR" != "true" ]; then stage=idea; fi
           elif [ "$BUSY" = "true" ]; then stage=none
+          elif [ "$IS_PR" = "true" ]; then
+            if printf '%s' "$first" | grep -qE '^update\b'; then stage=update; fi
           elif [ "$SPEC_READY" != "true" ] && printf '%s' "$first" | grep -qE '^idea\b'; then stage=idea
           elif [ "$IDEA" != "true" ]; then stage=none
           elif printf '%s' "$first" | grep -qE '^approved,? no spec'; then stage=build-direct
@@ -120,27 +123,58 @@ jobs:
 
             **build-direct**: the owner skipped the spec gate for a small change. Create the branch, write a short spec (product.md) with recommended answers as Decisions, then do everything in **build**.
 
+            How this run ends: it ends the moment you reply without calling a tool. A progress update, a summary, or "next I'll …" ends it, and whatever you hadn't done stays undone. So never stop between steps: go from one to the next without pausing to report. The stage is done only when its label is on the issue (`spec-ready` for spec and revise, `pr-ready` for build and build-direct). Check that it is there before your final message. Run subagents in the foreground and wait for their result. Never run them, or anything else, in the background: a background result never arrives in a headless run.
+
+            Spec numbers: the next number is one above the highest in docs/specs/ on main *and* on every remote `feat/*` branch (`git ls-remote origin 'refs/heads/feat/*'`). Other issues' specs may not be merged yet.
+
+            **update**: #${{ github.event.issue.number }} is a pull request, not an issue: read it with `gh pr view ${{ github.event.issue.number }} --comments` and its spec (linked in the body). Check out its branch and merge main into it (`git fetch origin` then `git merge origin/main`; never rebase, since that would need a force-push). Resolve every conflict so that both this PR's feature and what landed on main keep working. If main took the same `SCHEMA_VERSION` or spec number, move this PR's one up (renumber its migration, test, spec file and links). Then run `npm run typecheck && npm test && npm run e2e` and fix what broke. Push the branch as its own command (the git hook refuses a push in a command that mentions main), watch CI to green, and post a short comment on the PR saying what conflicted and how you resolved it. No review or QA pass unless resolving a conflict meant changing how the feature behaves.
+
             Hard rules: never push to main, never force-push, never merge a PR. Photo safety rules in CLAUDE.md are absolute. Use generated photos only in tests. If something blocks you that only the owner can decide, post a comment on the issue explaining it and stop. End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>" and PR bodies with "🤖 Generated with [Claude Code](https://claude.com/claude-code)".
 
-      # Claude can exit "successfully" without doing the stage (e.g. when tools are refused).
+      # Claude can exit "successfully" without doing the stage: tools refused, or it ended its
+      # reply partway (builds for #19 and #41 stopped after the code, before review/QA/PR).
       # The stage is done only when its label is on the issue.
       - name: Check the stage finished
-        id: check
-        env:
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        id: check1
         run: |
-          case "$STAGE" in
-            idea) want='idea|duplicate|bug' ;;
-            spec|revise) want=spec-ready ;;
-            *) want=pr-ready ;;
-          esac
-          denials=$(jq -r '(if type == "array" then (map(select(.type == "result")) | last) else . end) | .permission_denials_count // 0' "$EXECUTION_FILE" 2>/dev/null || echo "?")
-          echo "Permission denials: $denials"
-          if ! gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qxE "$want"; then
-            echo "reason=it finished without adding \`$want\` ($denials permission denials)" >> "$GITHUB_OUTPUT"
-            echo "::error::Stage $STAGE finished without adding $want ($denials permission denials)"
+          cp "${{ steps.claude.outputs.execution_file }}" "$RUNNER_TEMP/transcript-1.json" 2>/dev/null || true
+          .github/scripts/stage-done.sh "$RUNNER_TEMP/transcript-1.json"
+
+      # It stopped early and nothing was refused: resume the same session and tell it to carry on.
+      - name: Continue an unfinished stage
+        id: claude2
+        if: steps.check1.outputs.done != 'true' && steps.check1.outputs.denials == '0' && steps.claude.outputs.session_id != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --resume ${{ steps.claude.outputs.session_id }}
+            --max-turns 400
+            --allowedTools "Bash,Read,Edit,MultiEdit,Write,Glob,Grep,Agent,Task,TodoWrite"
+          prompt: |
+            You ended your reply before the `${{ needs.route.outputs.stage }}` stage was finished: ${{ steps.check1.outputs.reason }}. Nobody saw that reply. Check where things stand (git log, the branch, the issue, any PR) and carry on from there to the end of the stage, without repeating work that's already done. Don't stop until the stage is finished (its label is on the issue; for update, main is merged into the PR's branch and pushed), or until something blocks you that only the owner can decide, in which case post a comment on the issue explaining it.
+
+      - name: Check the stage finished (after continuing)
+        id: check
+        run: |
+          if [ "${{ steps.check1.outputs.done }}" = "true" ]; then exit 0; fi
+          cp "${{ steps.claude2.outputs.execution_file }}" "$RUNNER_TEMP/transcript-2.json" 2>/dev/null || true
+          f="$RUNNER_TEMP/transcript-2.json"; [ -f "$f" ] || f="$RUNNER_TEMP/transcript-1.json"
+          .github/scripts/stage-done.sh "$f"
+          if ! grep -q '^done=true$' "$GITHUB_OUTPUT"; then
+            echo "::error::Stage $STAGE did not finish"
             exit 1
           fi
+
+      # The transcripts, so a stopped run can be diagnosed (the log only shows the final result).
+      - name: Keep the transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-transcript-${{ github.event.issue.number }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/transcript-*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Clear the building label
         if: always()

@@ -255,6 +255,8 @@ export interface Api {
   listAlbums(): Promise<Album[]>
   createAlbum(name: string, parentId: number | null): Promise<Album>
   renameAlbum(id: number, name: string): Promise<void>
+  /** Puts an album inside another (null = top level). False if refused (into itself or its own sub-albums). */
+  moveAlbum(id: number, parentId: number | null): Promise<boolean>
   deleteAlbum(id: number): Promise<void>
   addToAlbum(albumId: number, photoIds: number[]): Promise<void>
   removeFromAlbum(albumId: number, photoIds: number[]): Promise<void>

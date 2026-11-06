@@ -215,9 +215,12 @@ export function App() {
     })
   const undoDismiss = async () => {
     if (notice?.kind !== 'dismissed') return
-    await api.restoreSuggestions(notice.decisionIds)
-    setNotice(null)
-    refreshAll()
+    const ids = notice.decisionIds
+    // Queued with other decisions, so it never races a dismissal still in flight.
+    await decide(async () => {
+      await api.restoreSuggestions(ids)
+      setNotice(null)
+    }).catch(() => {})
   }
   const currentPerson = view.kind === 'person' ? people.find((p) => p.id === view.id) : undefined
 

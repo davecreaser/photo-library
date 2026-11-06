@@ -34,6 +34,8 @@ export class Organiser {
    * already (mostly) saved as an album becomes one (spec 0001, AC-9). Run at startup.
    * A merge waits (for a later launch) while any photo taken during it is missing, e.g. on an
    * unplugged drive, so no partial album is made. Merges with nothing left to find are dropped.
+   * A photo deleted from disk counts as missing until the user chooses "Forget them…" in the
+   * sidebar; that is intended (we can't tell deleted from unplugged), and forgetting releases the merge.
    */
   convertOldMerges(): void {
     const merges = this.db.eventGroups()

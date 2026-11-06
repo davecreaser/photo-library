@@ -1,6 +1,6 @@
 # 0001: Suggested albums
 
-Status: approved
+Status: done
 Issue: none
 
 ## Problem

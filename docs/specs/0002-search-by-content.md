@@ -1,6 +1,6 @@
 # 0002: Search by content
 
-Status: approved
+Status: done
 Issue: none (roadmap item 3 in `README.md`, "Semantic search")
 
 ## Problem

@@ -54,7 +54,7 @@ function snapshot(dir: string): string {
 }
 
 /** A library with an analysed app around it. `arrange` creates its photos (before the guard protects the folder). */
-async function setup(arrange: (photos: string) => Promise<void>, modelsDir = MODELS) {
+async function setup(arrange: (photos: string) => Promise<void>, modelsDir = MODELS, previews?: (appData: string) => ImageCache) {
   const root = mkdtempSync(join(tmpdir(), 'pl-content-'))
   const photos = join(root, 'photos')
   const appData = join(root, 'app')
@@ -69,7 +69,7 @@ async function setup(arrange: (photos: string) => Promise<void>, modelsDir = MOD
     before = snapshot(photos)
   }
   const db = new LibraryDb(join(appData, 'library.db'))
-  const images = new ImageCache(join(appData, 'cache'))
+  const images = previews?.(appData) ?? new ImageCache(join(appData, 'cache'))
   const events: ContentProgress[] = []
   const people = new People(db, MODELS, join(appData, 'cache', 'faces'), () => {})
   const analysis = new Analysis({ db, people, images, modelsDir, packaged: false, onContentProgress: (p) => events.push(p) })
@@ -293,6 +293,35 @@ test('AC-9: unreadable photos are recorded once and don’t stop analysis', asyn
   assert.deepEqual(lib.db.photosNeedingAnalysis({ faces: FACE_MODEL_VERSION, content: CONTENT_MODEL_VERSION }, 100), [], 'recorded, not retried')
   assert.equal(lib.events.at(-1)!.done, 9)
   assert.equal((await lib.find('red')).total, 4)
+  await lib.cleanup()
+})
+
+test('AC-9: photos sharp can’t decode (HEIC, RAW) are analysed from their cached preview', async () => {
+  // The preview the image cache makes (on a Mac with sips, elsewhere from the embedded thumbnail): here, a red JPEG.
+  const preview = join(mkdtempSync(join(tmpdir(), 'pl-preview-')), 'preview.jpg')
+  await sharp({ create: { width: 320, height: 240, channels: 3, background: COLOURS.red } })
+    .jpeg()
+    .toFile(preview)
+  const asked: string[] = []
+  const lib = await setup(
+    async (photos) => {
+      await colours(photos)
+      userFs.write(join(photos, 'phone', 'IMG_0001.HEIC'), Buffer.from('ftypheic: not something sharp can decode'))
+    },
+    MODELS,
+    (appData) =>
+      Object.assign(new ImageCache(join(appData, 'cache')), {
+        get: async (photo: { path: string }) => {
+          asked.push(photo.path)
+          return preview
+        }
+      })
+  )
+  assert.ok(
+    asked.some((p) => p.endsWith('IMG_0001.HEIC')),
+    'the preview was used'
+  )
+  assert.ok((await lib.names('red')).includes('IMG_0001.HEIC'), 'found by what its preview shows')
   await lib.cleanup()
 })
 

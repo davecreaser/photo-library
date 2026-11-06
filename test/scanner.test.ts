@@ -1,11 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import sharp from 'sharp'
 import { installFsGuard } from '../src/main/fsGuard.ts'
 import { LibraryDb } from '../src/main/db.ts'
@@ -13,12 +12,12 @@ import { scanLibrary } from '../src/main/scanner.ts'
 import { ImageCache } from '../src/main/thumbnails.ts'
 import { Organiser } from '../src/main/organiser.ts'
 import { IgnoreRules } from '../src/main/ignore.ts'
+import { userFs } from './helpers.ts'
 
 // Run with the same filesystem guard as the app. Photo folders are protected once
-// created; arranging files the way a user would (in Finder) goes through /bin tools.
+// created; arranging files the way a user would (in Finder) goes through userFs.
 let protectedNow: string[] = []
 installFsGuard({ allowedRoots: () => [tmpdir()], protectedRoots: () => protectedNow })
-const sh = (cmd: string, ...args: string[]) => execFileSync(`/bin/${cmd}`, args)
 
 let colour = 0
 /** Writes a distinct JPEG (unique content) at `path`, outside the guard like a camera import would. */
@@ -28,8 +27,7 @@ async function makePhoto(path: string, exifDate?: string, camera = 'Canon EOS 80
     .withExif(exifDate ? { IFD0: { Make: camera.split(' ')[0], Model: camera }, IFD2: { DateTimeOriginal: exifDate } } : {})
     .jpeg()
     .toFile(staging)
-  sh('mkdir', '-p', dirname(path))
-  sh('mv', staging, path)
+  userFs.mv(staging, path)
 }
 
 async function snapshot(dir: string): Promise<Map<string, string>> {
@@ -46,7 +44,8 @@ async function setup(prefix: string) {
   const root = await mkdtemp(join(tmpdir(), prefix))
   const photos = join(root, 'photos')
   const appData = join(root, 'app')
-  sh('mkdir', '-p', photos, appData)
+  userFs.mkdir(photos)
+  userFs.mkdir(appData)
   return { root, photos, appData }
 }
 
@@ -120,8 +119,7 @@ test('moving or renaming files keeps tags, albums and favourites', async () => {
   db.setFavorite([jake.id], true)
 
   // The user tidies up in Finder: move into a new folder and rename.
-  sh('mkdir', '-p', join(photos, 'jake birthday'))
-  sh('mv', join(photos, 'unsorted', 'DSCF0001.JPG'), join(photos, 'jake birthday', 'cake.jpg'))
+  userFs.mv(join(photos, 'unsorted', 'DSCF0001.JPG'), join(photos, 'jake birthday', 'cake.jpg'))
   const r = await scan(db, photos)
   assert.deepEqual([r.added, r.relocated, r.missing], [0, 1, 0])
 
@@ -146,9 +144,8 @@ test('a new base folder with the same photos keeps everything', async () => {
 
   // Copy the library to a new disk with a completely different layout.
   const newBase = join(root, 'new-disk', 'Pictures')
-  sh('mkdir', '-p', join(newBase, 'flat'))
-  sh('cp', '-p', join(photos, 'a', '1.jpg'), join(newBase, 'flat', 'IMG_A.jpg'))
-  sh('cp', '-p', join(photos, 'b', '2.jpg'), join(newBase, 'flat', 'IMG_B.jpg'))
+  userFs.cp(join(photos, 'a', '1.jpg'), join(newBase, 'flat', 'IMG_A.jpg'))
+  userFs.cp(join(photos, 'b', '2.jpg'), join(newBase, 'flat', 'IMG_B.jpg'))
   protectedNow = [photos, newBase]
   const r = await scan(db, newBase)
   assert.deepEqual([r.added, r.relocated], [0, 2])
@@ -163,9 +160,8 @@ test('a new base folder with the same photos keeps everything', async () => {
 test('identical copies are one photo with several locations', async () => {
   const { root, photos, appData } = await setup('pl-dupe-')
   await makePhoto(join(photos, 'fuji', 'unsorted', 'DSCF1077.JPG'), '2026:09:12 10:00:00')
-  sh('mkdir', '-p', join(photos, '2026'), join(photos, 'trips', '12.25.poland', 'best'))
-  sh('cp', '-p', join(photos, 'fuji', 'unsorted', 'DSCF1077.JPG'), join(photos, '2026', 'DSCF1077.JPG'))
-  sh('cp', '-p', join(photos, 'fuji', 'unsorted', 'DSCF1077.JPG'), join(photos, 'trips', '12.25.poland', 'best', 'DSCF1077.JPG'))
+  userFs.cp(join(photos, 'fuji', 'unsorted', 'DSCF1077.JPG'), join(photos, '2026', 'DSCF1077.JPG'))
+  userFs.cp(join(photos, 'fuji', 'unsorted', 'DSCF1077.JPG'), join(photos, 'trips', '12.25.poland', 'best', 'DSCF1077.JPG'))
   protectedNow = [photos]
   const db = new LibraryDb(join(appData, 'library.db'))
   const r = await scan(db, photos)
@@ -199,7 +195,7 @@ test('a photo edited in place keeps its tags', async () => {
 test('upgrades a v1 library, merging copies and keeping albums', async () => {
   const { root, photos, appData } = await setup('pl-migrate-')
   await makePhoto(join(photos, 'a.jpg'), '2024:01:01 10:00:00')
-  sh('cp', '-p', join(photos, 'a.jpg'), join(photos, 'a-copy.jpg'))
+  userFs.cp(join(photos, 'a.jpg'), join(photos, 'a-copy.jpg'))
   const dbFile = join(appData, 'library.db')
   // A database as written by the first version of the app.
   const v1 = new DatabaseSync(dbFile)
@@ -244,8 +240,7 @@ test('photos that disappear are hidden, and can be forgotten without touching fi
   const [gone] = db.queryPhotos({ text: 'jake_birth' }).photos
   const goneHash = createHash('sha256').update(await readFile(gone.path)).digest('hex')
   db.addTag([gone.id], 'Jake')
-  sh('mkdir', '-p', join(root, 'elsewhere'))
-  sh('mv', join(photos, 'jake_birth'), join(root, 'elsewhere'))
+  userFs.mv(join(photos, 'jake_birth'), join(root, 'elsewhere', 'jake_birth'))
   const r = await scan(db, photos)
   assert.equal(r.missing, 1)
   assert.equal(db.queryPhotos({ text: 'jake' }).total, 0, 'hidden')

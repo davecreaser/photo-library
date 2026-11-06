@@ -80,7 +80,7 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
           <>
             <h4>Found in {details.locations.length} places</h4>
             <ul className="locations">
-              {details.locations.map((l) => <li key={l} title={l}>{l.split('/').slice(-3).join('/')}</li>)}
+              {details.locations.map((l) => <li key={l} title={l}>{l.split(/[\\/]/).slice(-3).join('/')}</li>)}
             </ul>
             <p className="hint">Identical copies are shown once. Albums and tags apply to all of them.</p>
           </>

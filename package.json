@@ -9,7 +9,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning 'test/**/*.test.ts'",
+    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning \"test/**/*.test.ts\"",
     "postinstall": "node scripts/fetch-models.mjs",
     "fetch-models": "node scripts/fetch-models.mjs"
   },
@@ -29,5 +29,8 @@
     "react": "19.2.9",
     "react-dom": "19.2.9",
     "sharp": "0.35.5"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }

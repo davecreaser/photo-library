@@ -118,9 +118,16 @@ for (const [name, attack] of attacks) {
 
 test('guard blocks writes through a symlink that points into the photo folder', async () => {
   // Creating the link is allowed (it lives in app data); writing through it must not be.
-  fs.symlinkSync(photos, join(appData, 'sneaky-link'))
+  // (On Windows a directory junction, which needs no admin rights.)
+  fs.symlinkSync(photos, join(appData, 'sneaky-link'), process.platform === 'win32' ? 'junction' : 'dir')
   await assert.rejects(async () => fsp.writeFile(join(appData, 'sneaky-link', 'trip', 'IMG_0001.JPG'), 'x'), ProtectedPathError)
   await assert.rejects(async () => fsp.rm(join(appData, 'sneaky-link', 'trip'), { recursive: true }), ProtectedPathError)
+})
+
+test('guard sees through different letter case on case-insensitive disks (macOS, Windows)', { skip: process.platform === 'linux' }, () => {
+  const shout = (p: string) => p.replace(/photos/g, 'PHOTOS').replace(/trip/g, 'TRIP')
+  assert.throws(() => assertWritable(shout(photo)), ProtectedPathError)
+  assert.throws(() => assertWritable(join(shout(join(photos, 'trip')), 'new-file.jpg')), ProtectedPathError)
 })
 
 test('protected wins even when a photo folder is inside the app data folder', () => {

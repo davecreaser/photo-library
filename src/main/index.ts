@@ -25,6 +25,8 @@ let scanAgain = false
 
 // Installed before anything else runs: from here on, no code in this process
 // (ours or a dependency's) can write, move or delete inside a photo folder.
+// PHOTO_LIBRARY_DATA_DIR lets tests (and power users) keep the library elsewhere.
+if (process.env.PHOTO_LIBRARY_DATA_DIR) app.setPath('userData', process.env.PHOTO_LIBRARY_DATA_DIR)
 const dataDir = app.getPath('userData')
 let protectedRoots: string[] = []
 installFsGuard({ allowedRoots: () => [dataDir, tmpdir()], protectedRoots: () => protectedRoots })
@@ -38,8 +40,11 @@ function loadProtectedRoots(): void {
 
 /** A photo folder must not contain (or be inside) the app's data folder, so the two can never overlap. */
 function overlapsAppData(folder: string): boolean {
-  const norm = (p: string) => (p.endsWith('/') ? p : p + '/')
-  return norm(dataDir).startsWith(norm(folder)) || norm(folder).startsWith(norm(dataDir))
+  const inside = (root: string, p: string) => {
+    const rel = relative(root, p)
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  }
+  return inside(folder, dataDir) || inside(dataDir, folder)
 }
 
 function libraryInfo(): LibraryInfo {

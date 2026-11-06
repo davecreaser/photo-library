@@ -2,7 +2,7 @@ import type { ClockSuggestion } from '../../../shared/types.ts'
 import { formatDate } from '../format.ts'
 
 function prettyFolder(dir: string): string {
-  return dir.split('/').at(-1) ?? dir
+  return dir.split(/[\\/]/).at(-1) ?? dir
 }
 
 export function ClockBanner({ suggestion: s, onApply, onDismiss }: { suggestion: ClockSuggestion; onApply: () => void; onDismiss: () => void }) {

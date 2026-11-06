@@ -1,6 +1,6 @@
 # 0003: New photos for an album
 
-Status: draft
+Status: approved
 Issue: #19
 
 ## Problem
@@ -97,4 +97,15 @@ Reuses the Suggested albums view (`SuggestionsView`), the status-slot notices, a
 
 ## Decisions
 
-- (pending the owner's answers)
+The owner replied `go`, so the recommended answers stand.
+
+1. Photos inside the album's date span in a different folder are counted: yes.
+2. The end of the span is extended by the 18-hour burst gap: yes.
+3. No banner on the album's own page; offers live only in Suggested albums.
+4. "Not these" applies to those photos only; later photos are offered anew.
+
+Implementation notes:
+
+- Photos added through an offer are also added to the album's accepted decision, so removing one later doesn't make it new again, and deleting the album brings the whole group back as a suggestion.
+- Photos offered to an album are taken out of the detected groups before suggestions are chosen (AC-4); a trimmed burst's name and dates follow the remaining photos.
+- Schema version 6 adds `offer_declines` (album + photo, cascading with both).

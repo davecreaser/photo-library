@@ -1,13 +1,18 @@
 name: Agent
 
-# The headless /feature workflow, driven by the owner's comments on `idea` issues:
-#   "approved"           -> write the spec (and design), post a summary, label spec-ready
+# The headless /feature workflow, driven by the owner's issues and comments:
+#   new issue, no labels -> an idea in plain words: validate it and rewrite it as an `idea` issue
+#                           (.claude/skills/idea); file bugs with the `bug` label to skip this
+#   "idea"               -> on an issue that isn't spec-ready: validate it again (with the new detail)
+#   "approved"           -> on an `idea` issue: write the spec (and design), post a summary, label spec-ready
 #   "approved, no spec"  -> small change: skip the spec gate and build straight away
 #   "revise: <changes>"  -> on a spec-ready issue: update the spec/design and post again
 #   "go"                 -> on a spec-ready issue: build, review, QA, open a PR, watch CI
-# Only the repository owner's comments do anything. The agent never merges or pushes to main.
+# Only the repository owner's issues and comments do anything. The agent never merges or pushes to main.
 
 on:
+  issues:
+    types: [opened]
   issue_comment:
     types: [created]
 
@@ -15,21 +20,27 @@ jobs:
   route:
     if: >-
       !github.event.issue.pull_request &&
-      github.event.comment.user.login == github.repository_owner &&
-      contains(github.event.issue.labels.*.name, 'idea')
+      github.event.sender.login == github.repository_owner
     runs-on: ubuntu-latest
     outputs:
       stage: ${{ steps.pick.outputs.stage }}
     steps:
       - id: pick
         env:
+          EVENT: ${{ github.event_name }}
           BODY: ${{ github.event.comment.body }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          IDEA: ${{ contains(github.event.issue.labels.*.name, 'idea') }}
           SPEC_READY: ${{ contains(github.event.issue.labels.*.name, 'spec-ready') }}
           BUSY: ${{ contains(github.event.issue.labels.*.name, 'building') }}
         run: |
           first=$(printf '%s' "$BODY" | head -n1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
           stage=none
-          if [ "$BUSY" = "true" ]; then stage=none
+          if [ "$EVENT" = "issues" ]; then
+            if [ -z "$LABELS" ]; then stage=idea; fi
+          elif [ "$BUSY" = "true" ]; then stage=none
+          elif [ "$SPEC_READY" != "true" ] && printf '%s' "$first" | grep -qE '^idea\b'; then stage=idea
+          elif [ "$IDEA" != "true" ]; then stage=none
           elif printf '%s' "$first" | grep -qE '^approved,? no spec'; then stage=build-direct
           elif [ "$SPEC_READY" != "true" ] && printf '%s' "$first" | grep -qE '^approved\b'; then stage=spec
           elif [ "$SPEC_READY" = "true" ] && printf '%s' "$first" | grep -qE '^go\b'; then stage=build
@@ -92,12 +103,14 @@ jobs:
 
             Read first: CLAUDE.md, CONTEXT.md, docs/product/brief.md, docs/adr/, .claude/skills/feature/SKILL.md, and the agent definitions in .claude/agents/. Read the issue and all its comments with `gh issue view ${{ github.event.issue.number }} --comments`.
 
-            The owner's latest comment (the trigger):
+            The trigger (the owner's latest comment, or the issue they just opened):
             ---
-            ${{ github.event.comment.body }}
+            ${{ github.event.comment.body || github.event.issue.body }}
             ---
 
             Do exactly the part for your stage:
+
+            **idea**: follow .claude/skills/idea/SKILL.md, its Headless section. The owner's words are the issue's title and body; on an `idea` comment, also every later comment, and if the issue was already rewritten, keep its "The owner's words" section and add the new words to it. If the issue is clearly a bug report rather than a feature idea, add the `bug` label, post a one-line comment saying so, and stop.
 
             **spec**: SKILL steps 1–3 without the live gates. Create branch `feat/NNNN-slug` from main (next spec number in docs/specs/). Write the spec following .claude/agents/product.md, then, if the feature has UI, the Design section following .claude/agents/designer.md. Commit and push the branch (no PR yet). Then post ONE comment on the issue with: a link to the spec file on the branch, a 5-line summary, the acceptance criteria (one line each), the key screens and copy (if UI), and numbered open questions each with your recommended answer. End the comment with: "Reply `go` to build with the recommended answers, `go` plus your answers to change any, or `revise: …` to change the spec." Add the label `spec-ready`. Stop: do not build.
 
@@ -117,12 +130,13 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           case "$STAGE" in
+            idea) want='idea|duplicate|bug' ;;
             spec|revise) want=spec-ready ;;
             *) want=pr-ready ;;
           esac
           denials=$(jq -r '(if type == "array" then (map(select(.type == "result")) | last) else . end) | .permission_denials_count // 0' "$EXECUTION_FILE" 2>/dev/null || echo "?")
           echo "Permission denials: $denials"
-          if ! gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx "$want"; then
+          if ! gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qxE "$want"; then
             echo "reason=it finished without adding \`$want\` ($denials permission denials)" >> "$GITHUB_OUTPUT"
             echo "::error::Stage $STAGE finished without adding $want ($denials permission denials)"
             exit 1

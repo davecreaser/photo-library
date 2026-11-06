@@ -65,6 +65,24 @@ _Avoid_: best, pick
 A group of photos the app proposes as an album, from a named folder or a burst of photos taken together. Accepting makes it an album; dismissing hides it for good.
 _Avoid_: event, trip, moment
 
+### Search
+
+**Name match**:
+A photo a search finds because its words are written down: in a folder or file name, an album, a tag or a person's name.
+_Avoid_: keyword match, text match
+
+**Content phrase**:
+What's left of a search after dates, people's names and filler words; it is looked for in what photos show.
+_Avoid_: query embedding, prompt
+
+**Content match**:
+A photo a search finds because it looks like the content phrase. Listed after the name matches, best match first.
+_Avoid_: semantic match, AI match, similar photo
+
+**Content analysis**:
+The app's one-off reading, on this computer, of what each photo shows, which content search compares phrases with.
+_Avoid_: indexing (that's the scan), embedding, tagging
+
 ### People
 
 **Face**:

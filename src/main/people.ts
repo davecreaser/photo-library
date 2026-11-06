@@ -1,33 +1,28 @@
-// People: runs face analysis in the background and keeps groups/matches up to date.
+// People: stores face analysis and keeps groups/matches up to date.
 // Face thumbnails are written to the app's cache (never next to the photos).
 import sharp from 'sharp'
 import { join } from 'node:path'
 import type { LibraryDb } from './db.ts'
-import { FACE_MODEL_VERSION, FaceAnalyser } from './faces.ts'
+import { FACE_MODEL_VERSION, FaceAnalyser, type DetectedFace } from './faces.ts'
 import { clusterFaces, matchPeople } from './faceGroups.ts'
-import type { ImageCache } from './thumbnails.ts'
 import { ensureAppDir, removeAppFiles, writeAppFile } from './appFiles.ts'
 import type { FaceProgress, Person } from '../shared/types.ts'
 
-const BATCH = 20
 /** Regroup this often during a long first analysis, so groups appear early. */
 const REGROUP_EVERY = 150
 
 export class People {
   private db: LibraryDb
   private modelsDir: string
-  private images: ImageCache
   private cropDir: string
   private onProgress: (p: FaceProgress) => void
-  private analyser: Promise<FaceAnalyser> | null = null
-  private running = false
-  private again = false
+  private loading: Promise<FaceAnalyser> | null = null
+  private sinceRegroup = 0
   private progress: FaceProgress = { phase: 'idle', done: 0, total: 0 }
 
-  constructor(db: LibraryDb, modelsDir: string, images: ImageCache, cropDir: string, onProgress: (p: FaceProgress) => void) {
+  constructor(db: LibraryDb, modelsDir: string, cropDir: string, onProgress: (p: FaceProgress) => void) {
     this.db = db
     this.modelsDir = modelsDir
-    this.images = images
     this.cropDir = cropDir
     this.onProgress = onProgress
   }
@@ -51,68 +46,46 @@ export class People {
     this.onProgress(this.progress)
   }
 
-  /** Analyses any photos that haven't been yet. Safe to call repeatedly (e.g. after every scan). */
-  kick(): void {
-    if (this.running) {
-      this.again = true
-      return
+  // Face analysis runs in the shared background pass (analysis.ts), one read per photo.
+
+  /** The face models, loaded once; null (and progress says why) when they can't be loaded. */
+  async analyser(): Promise<FaceAnalyser | null> {
+    try {
+      this.loading ??= FaceAnalyser.load(this.modelsDir)
+      const analyser = await this.loading
+      await ensureAppDir(this.cropDir)
+      return analyser
+    } catch (e) {
+      this.loading = null // try again on the next pass
+      this.emit({ phase: 'unavailable', error: `Face models not found. Run "npm run fetch-models". (${e instanceof Error ? e.message : e})` })
+      return null
     }
-    this.running = true
-    void (async () => {
-      try {
-        do {
-          this.again = false
-          await this.analyseAll()
-        } while (this.again)
-      } finally {
-        this.running = false
-      }
-    })()
   }
 
-  private async analyseAll(): Promise<void> {
-    let analyser: FaceAnalyser
-    try {
-      this.analyser ??= FaceAnalyser.load(this.modelsDir)
-      analyser = await this.analyser
-    } catch (e) {
-      this.analyser = null
-      this.emit({ phase: 'unavailable', error: `Face models not found. Run "npm run fetch-models". (${e instanceof Error ? e.message : e})` })
-      return
+  /** Reports progress while photos are being analysed. */
+  analysing(): void {
+    this.emit({ phase: 'analysing', ...this.db.faceProgress(FACE_MODEL_VERSION) })
+  }
+
+  /** Stores a photo's faces (none when it couldn't be read, so it isn't retried) and their thumbnails. */
+  async record(photoId: number, faces: DetectedFace[]): Promise<void> {
+    const ids = this.db.saveFaces(photoId, faces, FACE_MODEL_VERSION)
+    for (let i = 0; i < ids.length; i++) {
+      const jpeg = await sharp(faces[i].crop, { raw: { width: 112, height: 112, channels: 3 } })
+        .jpeg({ quality: 85 })
+        .toBuffer()
+      await writeAppFile(this.cropPath(ids[i]), jpeg)
     }
-    await ensureAppDir(this.cropDir)
-    let sinceRegroup = 0
-    for (;;) {
-      const batch = this.db.photosNeedingFaces(FACE_MODEL_VERSION, BATCH)
-      if (batch.length === 0) break
-      this.emit({ phase: 'analysing', ...this.db.faceProgress(FACE_MODEL_VERSION) })
-      for (const photo of batch) {
-        let faces: Awaited<ReturnType<FaceAnalyser['analyse']>> = []
-        try {
-          faces = await analyser.analyse(photo.path)
-        } catch {
-          // Formats sharp can't decode (HEIC, RAW): analyse the cached preview instead.
-          try {
-            faces = await analyser.analyse(await this.images.get(photo, 'preview'))
-          } catch {
-            faces = [] // unreadable: recorded as "no faces" so it isn't retried every time
-          }
-        }
-        const ids = this.db.saveFaces(photo.id, faces, FACE_MODEL_VERSION)
-        for (let i = 0; i < ids.length; i++) {
-          const jpeg = await sharp(faces[i].crop, { raw: { width: 112, height: 112, channels: 3 } })
-            .jpeg({ quality: 85 })
-            .toBuffer()
-          await writeAppFile(this.cropPath(ids[i]), jpeg)
-        }
-      }
-      sinceRegroup += batch.length
-      if (sinceRegroup >= REGROUP_EVERY) {
-        this.regroup()
-        sinceRegroup = 0
-      }
+    if (++this.sinceRegroup >= REGROUP_EVERY) {
+      this.regroup()
+      this.sinceRegroup = 0
     }
+  }
+
+  /** Called when a pass ends: final grouping, and progress back to idle. */
+  finished(): void {
     this.regroup()
+    this.sinceRegroup = 0
     this.emit({ phase: 'idle', ...this.db.faceProgress(FACE_MODEL_VERSION) })
   }
 

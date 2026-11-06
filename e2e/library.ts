@@ -77,6 +77,36 @@ export async function createEdgeLibrary(): Promise<Library> {
   return { root, uniquePhotos: 2 + 3 + 120 }
 }
 
+/**
+ * A plain-colour photo (no text, so it renders the same on every OS). Each file is a distinct
+ * photo through its EXIF description; photos of one colour have identical pixels and scores.
+ */
+async function colourPhoto(path: string, fill: string, date: string | null): Promise<void> {
+  mkdirSync(dirname(path), { recursive: true })
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="${fill}"/></svg>`
+  const exif = { IFD0: { ImageDescription: `test photo ${n++}` }, ...(date ? { IFD2: { DateTimeOriginal: date } } : {}) }
+  await sharp(Buffer.from(svg)).withExif(exif).jpeg().toFile(path)
+}
+
+export interface ContentLibrary extends Library {
+  red: number
+  blue: number
+}
+
+/**
+ * Search by content (spec 0002): red and blue photos with camera names, which the content model
+ * tells apart, plus a blue photo in a folder called "red things" (a name match for "red").
+ * `extra` green photos make analysis take long enough to search while it runs.
+ */
+export async function createContentLibrary(extra = 0): Promise<ContentLibrary> {
+  const root = mkdtempSync(join(tmpdir(), 'pl-e2e-content-'))
+  for (let i = 0; i < 3; i++) await colourPhoto(join(root, 'camera', `DSC_R${i}.JPG`), '#d42020', `2025:0${i + 1}:10 10:00:00`)
+  for (let i = 0; i < 3; i++) await colourPhoto(join(root, 'camera', `DSC_B${i}.JPG`), '#2040d4', `2026:0${i + 1}:10 10:00:00`)
+  await colourPhoto(join(root, 'red things', 'DSC_X.JPG'), '#2040d4', '2024:05:01 10:00:00')
+  for (let i = 0; i < extra; i++) await colourPhoto(join(root, 'more', `DSC_G${i}.JPG`), '#30a040', '2023:01:01 10:00:00')
+  return { root, uniquePhotos: 7 + extra, red: 3, blue: 4 }
+}
+
 /** `folders` named folders of one photo each, a day apart (AC-12: thousands of suggestions). */
 export async function createManyFoldersLibrary(folders: number): Promise<Library> {
   const root = mkdtempSync(join(tmpdir(), 'pl-e2e-many-'))

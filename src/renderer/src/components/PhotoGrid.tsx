@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Photo, PhotoFilter } from '../../../shared/types.ts'
-import { formatDate } from '../format.ts'
+import type { ContentProgress, Photo, PhotoFilter, SearchInfo } from '../../../shared/types.ts'
+import { formatDate, photoCount } from '../format.ts'
+import { dividerLabel, emptySearch, searchHint, searchMeta } from '../searchCopy.ts'
 
 const PAGE = 300
 const api = window.api
@@ -13,12 +14,22 @@ interface Props {
   onSelectionChange: (s: Set<number>) => void
   onPhotosLoaded: (photos: Photo[]) => void
   onOpen: (index: number) => void
+  /** The search typed, in the search view (spec 0002); null in other views. */
+  searchText: string | null
+  contentProgress: ContentProgress | null
 }
 
-export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhotosLoaded, onOpen }: Props) {
+export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhotosLoaded, onOpen, searchText, contentProgress }: Props) {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  // A search's make-up (name matches, then content matches) and whether a new one is loading.
+  const [info, setInfo] = useState<SearchInfo | undefined>(undefined)
+  const [searching, setSearching] = useState(false)
+  // Results found while analysis was running: once it finishes, say so (they never refresh by themselves).
+  const [loadedWhileAnalysing, setLoadedWhileAnalysing] = useState(false)
+  const progress = useRef(contentProgress)
+  progress.current = contentProgress
   const sentinel = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const lastClicked = useRef<number | null>(null)
@@ -29,18 +40,28 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
   const load = async (offset: number, limit: number, replace: boolean) => {
     const id = ++requestId.current
     setLoading(true)
+    const analysing = progress.current?.phase === 'analysing'
     const page = await api.queryPhotos({ ...filter, offset, limit })
     if (id !== requestId.current) return
     setTotal(page.total)
+    setInfo(page.search)
+    if (offset === 0) setLoadedWhileAnalysing(analysing)
     setPhotos((prev) => (replace ? page.photos : [...prev, ...page.photos]))
     setLoading(false)
+    setSearching(false)
   }
 
-  // New view: start from the top.
-  useEffect(() => {
+  /** Runs the search again from the top (the "Refresh results" link). */
+  const refresh = () => {
     scroller.current?.scrollTo({ top: 0 })
     lastClicked.current = null
     void load(0, PAGE, true)
+  }
+
+  // New view: start from the top. A new search keeps the old results until the first page arrives.
+  useEffect(() => {
+    if (searchText !== null) setSearching(true)
+    refresh()
   }, [filterKey])
 
   // Same view, data changed: reload what's already shown without jumping.
@@ -92,30 +113,85 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
     onSelectionChange(next)
   }
 
+  const contentAvailable = contentProgress?.phase !== 'unavailable'
+  const meta =
+    searchText === null
+      ? `${photoCount(total)}${selected.size > 0 ? ` · ${selected.size} selected` : ' · ⌘-click or shift-click to select'}`
+      : searching
+        ? 'Searching…'
+        : searchMeta(total, info, selected.size, contentAvailable)
+  // Only a search with a content phrase and results gets a hint; with no phrase results are exactly as before.
+  const hint = searchText !== null && !searching && info?.phrase && total > 0 ? searchHint(contentProgress, loadedWhileAnalysing) : null
+  // The divider goes before the first content match, when there are name matches before it.
+  const dividerAt = info?.phrase && info.nameMatches > 0 && info.contentMatches > 0 ? info.nameMatches : -1
+  const empty = searchText !== null ? emptySearch(searchText, info, contentProgress) : null
+
   return (
     <div className="grid-scroller" ref={scroller}>
-      <div className="grid-meta">
-        {total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}
-        {selected.size > 0 ? ` · ${selected.size} selected` : ' · ⌘-click or shift-click to select'}
-      </div>
-      {!loading && total === 0 && <div className="empty">No photos here yet.</div>}
+      <div className="grid-meta">{meta}</div>
+      {hint && (
+        <p className="hint search-hint">
+          {hint.kind === 'unavailable' ? (
+            <>
+              <span className="error">{hint.danger}</span> {hint.rest}
+            </>
+          ) : (
+            <>
+              {hint.text}{' '}
+              <button className="link" onClick={refresh}>
+                Refresh results
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {!loading &&
+        total === 0 &&
+        (empty ? (
+          <div className="empty">
+            <p>{empty.title}</p>
+            <p className="hint">{empty.detail}</p>
+          </div>
+        ) : (
+          <div className="empty">No photos here yet.</div>
+        ))}
       <div className="grid">
         {photos.map((p, i) => (
-          <div
+          <PhotoTile
             key={p.id}
-            className={`tile ${selected.has(p.id) ? 'selected' : ''}`}
+            photo={p}
+            divider={i === dividerAt && info?.phrase ? dividerLabel(info.phrase) : null}
+            selected={selected.has(p.id)}
             onClick={(e) => handleClick(e, i, p)}
-            title={`${p.fileName} · ${formatDate(p.takenAt)}`}
-          >
-            <img src={`photo://thumb/${p.id}`} loading="lazy" decoding="async" alt="" />
-            <span className="check" onClick={(e) => toggle(e, i, p)}>
-              {selected.has(p.id) ? '✓' : ''}
-            </span>
-            {p.favorite && <span className="fav-badge">★</span>}
-          </div>
+            onToggle={(e) => toggle(e, i, p)}
+          />
         ))}
       </div>
       <div ref={sentinel} className="sentinel" />
     </div>
+  )
+}
+
+interface TileProps {
+  photo: Photo
+  /** A row before this tile, spanning the grid: where content matches start. Not a tile, so selection skips it. */
+  divider: string | null
+  selected: boolean
+  onClick: (e: React.MouseEvent) => void
+  onToggle: (e: React.MouseEvent) => void
+}
+
+function PhotoTile({ photo: p, divider, selected, onClick, onToggle }: TileProps) {
+  return (
+    <>
+      {divider && <div className="grid-divider">{divider}</div>}
+      <div className={`tile ${selected ? 'selected' : ''}`} onClick={onClick} title={`${p.fileName} · ${formatDate(p.takenAt)}`}>
+        <img src={`photo://thumb/${p.id}`} loading="lazy" decoding="async" alt="" />
+        <span className="check" onClick={onToggle}>
+          {selected ? '✓' : ''}
+        </span>
+        {p.favorite && <span className="fav-badge">★</span>}
+      </div>
+    </>
   )
 }

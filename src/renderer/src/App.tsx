@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Album,
   ClockSuggestion,
+  ContentProgress,
   FaceProgress,
   LibraryInfo,
   Person,
@@ -26,6 +27,7 @@ import { InlineInput } from './components/InlineInput.tsx'
 import { PeopleView } from './components/PeopleView.tsx'
 import { PersonFaces } from './components/PersonFaces.tsx'
 import { monthName } from './format.ts'
+import { ANALYSING_TOOLTIP, analysingStatus, searchPlaceholder, unavailableReason } from './searchCopy.ts'
 
 export type View =
   | { kind: 'all' }
@@ -70,6 +72,7 @@ export function App() {
   const [showIgnored, setShowIgnored] = useState(false)
   const [people, setPeople] = useState<Person[]>([])
   const [faceProgress, setFaceProgress] = useState<FaceProgress | null>(null)
+  const [contentProgress, setContentProgress] = useState<ContentProgress | null>(null)
   const [renamingPerson, setRenamingPerson] = useState(false)
   const [confirmForgetPerson, setConfirmForgetPerson] = useState(false)
   // Bumped whenever the photo list for the current view may have changed.
@@ -110,6 +113,9 @@ export function App() {
   useEffect(() => {
     void refreshSidebar()
     void api.getFaceProgress().then(setFaceProgress)
+    // Content analysis progress shows in the top bar and the search view; it never refreshes results by itself.
+    void api.getContentProgress().then(setContentProgress)
+    const offContent = api.onContentProgress(setContentProgress)
     const offScan = api.onScanProgress((p) => {
       setScan(p)
       if (p.phase === 'done') refreshAll()
@@ -126,6 +132,7 @@ export function App() {
     return () => {
       offScan()
       offFaces()
+      offContent()
     }
   }, [refreshSidebar, refreshAll])
 
@@ -271,13 +278,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="drag-region" />
-        <input
-          className="search"
-          type="search"
-          placeholder="Search: “august 2025”, “poland”, “jake”…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <input className="search" type="search" placeholder={searchPlaceholder(contentProgress)} value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="scan-status">
           {scanning ? (
             <span title={scan.current}>
@@ -285,11 +286,19 @@ export function App() {
             </span>
           ) : scan?.phase === 'error' ? (
             <span className="error">Scan failed: {scan.error}</span>
+          ) : contentProgress?.phase === 'analysing' ? (
+            <span className="content-status" title={ANALYSING_TOOLTIP}>
+              {analysingStatus(contentProgress)}
+            </span>
           ) : scan?.phase === 'done' && (scan.added || scan.relocated) ? (
             <span>
               {scan.added ? `${scan.added} new` : ''}
               {scan.added && scan.relocated ? ', ' : ''}
               {scan.relocated ? `${scan.relocated} moved/copied` : ''} · {library.photoCount.toLocaleString()} photos
+            </span>
+          ) : contentProgress?.phase === 'unavailable' ? (
+            <span title={unavailableReason(contentProgress)}>
+              {library.photoCount.toLocaleString()} photos · <span className="error">content search unavailable</span>
             </span>
           ) : (
             <span>{library.photoCount.toLocaleString()} photos</span>
@@ -485,7 +494,16 @@ export function App() {
             </div>
           </div>
         ) : (
-          <PhotoGrid filter={filter} version={version} selected={selected} onSelectionChange={setSelected} onPhotosLoaded={setPhotos} onOpen={setViewerIndex} />
+          <PhotoGrid
+            filter={filter}
+            version={version}
+            selected={selected}
+            onSelectionChange={setSelected}
+            onPhotosLoaded={setPhotos}
+            onOpen={setViewerIndex}
+            searchText={view.kind === 'search' ? view.text : null}
+            contentProgress={contentProgress}
+          />
         )}
       </main>
 

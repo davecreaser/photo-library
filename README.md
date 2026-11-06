@@ -7,6 +7,7 @@ A personal, local-only desktop app (Electron + React + SQLite) for browsing and 
 - **Virtual folders.** Albums can be nested, and a photo can be in any number of them.
 - **Browse by date** via the Timeline (year → month), using EXIF capture dates (falls back to the file date).
 - **Search** with free text: `august 2020`, `2020-08`, `spain`, `jake birthday`. Dates become date filters; other words match folder/file names, album names and tags.
+- **Search by content:** `beach`, `snow`, `sunset over water`, `jake beach 2025`. Each photo is analysed once, on this computer, in the background (SigLIP); photos that match by name come first, then photos that look like what you typed, best match first.
 - **Formats:** JPEG/PNG/WebP/GIF natively; HEIC, TIFF and RAW (CR2/CR3/NEF/ARW/DNG/…) via macOS `sips` or the embedded preview.
 - **Photos are identified by content (SHA-256).** Move, rename or copy files, or point the app at a new folder holding the same photos, and albums, tags and favourites stay. Identical copies show once.
 - **Events & trips** are detected automatically from your folder names and gaps in time. Keep one permanently with "Save as album".
@@ -19,7 +20,7 @@ A personal, local-only desktop app (Electron + React + SQLite) for browsing and 
 ## Run
 
 ```bash
-npm install        # also downloads the two face models (~39 MB, checksum-verified)
+npm install        # also downloads the face and content-search models (~39 MB + ~407 MB, checksum-verified)
 npm run dev        # development with hot reload
 npm run build && npm start
 npm test           # unit + integration tests
@@ -35,8 +36,18 @@ npm run typecheck
 
 ## Roadmap
 
+Specs live in `docs/specs/`; features go through `/feature`.
+
 1. ~~Events, clock fixes, duplicates, favourites~~ (done)
 2. ~~Faces~~ (done)
-3. **Semantic search:** local CLIP embeddings so "beach", "snow" or "birthday cake" work without tags.
-4. **Places:** reverse-geocode GPS offline to country/city.
-5. Optional (opt-in) Claude API captions, if the local models aren't good enough.
+3. ~~Suggested albums~~ (spec 0001, done)
+4. **Search by content** (spec 0002, in review): a local CLIP-style model (SigLIP) and a vector index (sqlite-vec), so "beach", "snow" or "birthday cake" work without tags.
+5. **Best photos** (spec 0003): near-duplicate detection (from the content embeddings), quality scores (sharpness, exposure, eyes open) and "pick a diverse set of N" (covering days and people). Useful on its own as a "Best of" view for any album or suggestion.
+6. **Local app API**: a localhost-only API (search, people, events, albums, best photos, export copies, render slideshow) that tools and agents can call. The app itself stays local-only.
+7. **Recipes with n8n**: n8n chains the app's building blocks for a job, with a human approval step and optional delivery to outside services (which the app never does itself).
+   - First recipe: **trip slideshow** ("make me a slideshow of our holiday to Poland"): pick the best ~40, approve or swap them in a form, render a video to `~/Movies`.
+   - Then: **photobook selection** ("best of 2026 as a present"): an album of the best ~60 plus a folder of copies ready for the print shop.
+   - Popular recipes become built-in buttons later ("Make slideshow" on an album).
+8. **Ask your library**: an n8n AI agent using the local API as tools ("when did we last go to Poland?", "Jake at the beach last summer"), with a local model (Ollama) or opt-in Claude for text only. This is the prototype for in-app natural-language search (RAG over the library).
+9. **Places:** reverse-geocode GPS offline to country/city.
+10. Optional (opt-in) Claude API captions, if the local models aren't good enough.

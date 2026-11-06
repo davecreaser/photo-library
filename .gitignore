@@ -5,5 +5,6 @@ dist
 resources/models
 playwright-report
 test-results
+scripts/model-eval/node_modules
 .claude/worktrees
 scripts/model-eval/results

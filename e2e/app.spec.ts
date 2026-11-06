@@ -3,7 +3,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createEdgeLibrary, createLibrary, createManyFoldersLibrary, fingerprint, LONG_FOLDER, type Library } from './library.ts'
+import { createContentLibrary, createEdgeLibrary, createLibrary, createManyFoldersLibrary, fingerprint, LONG_FOLDER, type Library } from './library.ts'
 
 let lib: Library
 let before: string
@@ -16,17 +16,25 @@ test.beforeAll(async () => {
   before = fingerprint(lib.root)
 })
 
-test.beforeEach(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), 'pl-e2e-data-'))
+/** Starts the app on `dataDir`; folder dialogs answer with `root`. */
+async function launch(root: string, env: Record<string, string> = {}) {
   app = await electron.launch({
     args: [join(process.cwd(), 'out', 'main', 'index.js'), ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-    env: { ...process.env, PHOTO_LIBRARY_DATA_DIR: dataDir }
+    env: { ...process.env, PHOTO_LIBRARY_DATA_DIR: dataDir, ...env }
   })
   page = await app.firstWindow()
   // Native folder dialogs can't be clicked by tests; answer them with the sample library.
   await app.evaluate(({ dialog }, root) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [root] })) as typeof dialog.showOpenDialog
-  }, lib.root)
+  }, root)
+}
+
+/** An empty models folder: no face or content analysis (for libraries too big to analyse in a test). */
+const NO_MODELS = () => ({ PHOTO_LIBRARY_MODELS_DIR: mkdtempSync(join(tmpdir(), 'pl-e2e-no-models-')) })
+
+test.beforeEach(async () => {
+  dataDir = mkdtempSync(join(tmpdir(), 'pl-e2e-data-'))
+  await launch(lib.root)
 })
 
 test.afterEach(async () => {
@@ -40,10 +48,27 @@ test.afterAll(() => {
   rmSync(lib.root, { recursive: true, force: true })
 })
 
-async function chooseLibrary() {
+/** Chooses the library and waits for the scan and background analysis to finish. */
+async function chooseLibrary(photos = lib.uniquePhotos) {
   await page.getByRole('button', { name: 'Choose photo folder…' }).click()
-  await expect(page.locator('.scan-status')).toContainText(`${lib.uniquePhotos} photos`)
-  await expect(page.locator('.scan-status')).not.toContainText('…')
+  await settled(photos)
+}
+
+/** Waits until the top bar shows the photo count with nothing in progress (scan or content analysis). */
+async function settled(photos: number) {
+  // Analysis loads a 400 MB model first; CI machines are slow at that.
+  await expect(page.locator('.scan-status')).toContainText(`${photos.toLocaleString('en-US')} photos`, { timeout: 90_000 })
+  await expect(page.locator('.scan-status')).not.toContainText('…', { timeout: 90_000 })
+  // Analysis starts a moment after the scan ends; wait until every photo is analysed (or it can't be).
+  await expect
+    .poll(
+      async () => {
+        const p = await page.evaluate(() => window.api.getContentProgress())
+        return p.phase === 'unavailable' || (p.phase === 'idle' && p.done === p.total && p.total === photos)
+      },
+      { timeout: 90_000 }
+    )
+    .toBe(true)
 }
 
 const nav = (name: string) => page.locator('.sidebar .nav-item', { hasText: name }).first()
@@ -289,13 +314,8 @@ test('suggested albums (AC-6): decisions survive a restart and a rescan', async 
   await expect(cards().locator('.event-name')).toHaveText(['House Listing'])
 
   await app.close()
-  app = await electron.launch({
-    args: [join(process.cwd(), 'out', 'main', 'index.js'), ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-    env: { ...process.env, PHOTO_LIBRARY_DATA_DIR: dataDir }
-  })
-  page = await app.firstWindow()
-  await expect(page.locator('.scan-status')).toContainText(`${lib.uniquePhotos} photos`)
-  await expect(page.locator('.scan-status')).not.toContainText('…')
+  await launch(lib.root)
+  await settled(lib.uniquePhotos)
   await nav('Suggested albums').click()
   await expect(cards().locator('.event-name')).toHaveText(['House Listing'])
   await expect(nav('Suggested albums').locator('.count')).toHaveText('1')
@@ -320,9 +340,8 @@ test('suggested albums: accepting while a rescan runs still makes the album', as
 test('suggested albums (AC-11, AC-1): the scanning state, a very long folder name, and an undated named folder', async () => {
   const edge = await createEdgeLibrary()
   const edgeBefore = fingerprint(edge.root)
-  await app.evaluate(({ dialog }, root) => {
-    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [root] })) as typeof dialog.showOpenDialog
-  }, edge.root)
+  await app.close()
+  await launch(edge.root, NO_MODELS()) // 125 photos: analysing them isn't what this tests
   await page.getByRole('button', { name: 'Choose photo folder…' }).click()
   await nav('Suggested albums').click()
   // Either caught mid-scan, or already finished: never an empty list mid-scan.
@@ -361,10 +380,7 @@ test('suggested albums (AC-11, AC-1): the scanning state, a very long folder nam
   expect(fingerprint(edge.root)).toBe(edgeBefore)
   rmSync(edge.root, { recursive: true, force: true })
   // afterEach closes `app` again; relaunch a throwaway instance so that works.
-  app = await electron.launch({
-    args: [join(process.cwd(), 'out', 'main', 'index.js'), ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-    env: { ...process.env, PHOTO_LIBRARY_DATA_DIR: dataDir }
-  })
+  await launch(lib.root)
 })
 
 test('suggested albums (AC-13): ignoring a folder forgets its dismissed suggestion and the folder name', async () => {
@@ -387,9 +403,8 @@ test('suggested albums (AC-12): 2,000 suggestions open quickly and load more as 
   test.setTimeout(300_000)
   const many = await createManyFoldersLibrary(2000)
   const manyBefore = fingerprint(many.root)
-  await app.evaluate(({ dialog }, root) => {
-    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [root] })) as typeof dialog.showOpenDialog
-  }, many.root)
+  await app.close()
+  await launch(many.root, NO_MODELS()) // analysing 2,000 photos isn't what this tests
   await page.getByRole('button', { name: 'Choose photo folder…' }).click()
   await expect(page.locator('.scan-status')).toContainText('2,000 photos', { timeout: 240_000 })
   await expect(page.locator('.scan-status')).not.toContainText('…', { timeout: 240_000 })
@@ -421,8 +436,120 @@ test('suggested albums (AC-12): 2,000 suggestions open quickly and load more as 
   await app.close()
   expect(fingerprint(many.root)).toBe(manyBefore)
   rmSync(many.root, { recursive: true, force: true })
-  app = await electron.launch({
-    args: [join(process.cwd(), 'out', 'main', 'index.js'), ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-    env: { ...process.env, PHOTO_LIBRARY_DATA_DIR: dataDir }
+  await launch(lib.root)
+})
+
+// --- search by content (spec 0002) ---
+
+/** Runs `body` against a content library (red and blue photos), then checks the app changed nothing in it. */
+async function withContentLibrary(extra: number, env: Record<string, string>, body: (photos: number) => Promise<void>) {
+  const content = await createContentLibrary(extra)
+  const contentBefore = fingerprint(content.root)
+  await app.close()
+  await launch(content.root, env)
+  await body(content.uniquePhotos)
+  await app.close()
+  expect(fingerprint(content.root)).toBe(contentBefore)
+  rmSync(content.root, { recursive: true, force: true })
+  await launch(lib.root) // for afterEach
+}
+
+const meta = () => page.locator('.grid-meta')
+const searchFor = (text: string) => page.locator('.search').fill(text)
+
+test('search by content (AC-1, AC-2, AC-5, AC-13): name matches, a divider, then what the photos show; nothing over the network', async () => {
+  await withContentLibrary(0, {}, async (photos) => {
+    // Every request the app makes, from any window or the main process's net module.
+    await app.evaluate(({ session }) => {
+      const seen: string[] = ((globalThis as unknown as { requests: string[] }).requests = [])
+      session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+        seen.push(details.url)
+        callback({})
+      })
+    })
+    await chooseLibrary(photos)
+    await expect(page.locator('.search')).toHaveAttribute('placeholder', 'Search: “sunset over water”, “jake 2025”, “poland”…')
+
+    // "red": the photo in the "red things" folder first (by name), then the red photos.
+    await searchFor('red')
+    await expect(meta()).toHaveText('4 photos · 1 by name, then 3 that look like “red”, best match first')
+    await expect(page.locator('.grid .tile')).toHaveCount(4)
+    await expect(page.locator('.grid-divider')).toHaveText(['Looks like “red”'])
+    await expect(page.locator('.grid > *').nth(1)).toHaveClass('grid-divider')
+    await expect(page.locator('.grid .tile').first()).toHaveAttribute('title', /^DSC_X\.JPG/)
+    for (const tile of await page.locator('.grid .tile').all()) {
+      if ((await tile.getAttribute('title'))?.startsWith('DSC_X')) continue
+      await expect(tile).toHaveAttribute('title', /^DSC_R/)
+    }
+    await expect(page.locator('.search-hint')).toHaveCount(0)
+
+    // Selecting across the divider: it isn't a tile.
+    await page
+      .locator('.grid .tile')
+      .first()
+      .click({ modifiers: ['ControlOrMeta'] })
+    await page
+      .locator('.grid .tile')
+      .last()
+      .click({ modifiers: ['Shift'] })
+    await expect(meta()).toHaveText('4 photos · 1 by name, then 3 that look like “red”, best match first · 4 selected')
+    await page.getByRole('button', { name: 'Clear' }).click()
+
+    // Content only, with a date filter; and a phrase.
+    await searchFor('blue 2026')
+    await expect(meta()).toHaveText('3 photos that look like “blue” · best match first')
+    await expect(page.locator('.grid-divider')).toHaveCount(0)
+    await searchFor('a red square')
+    await expect(meta()).toHaveText('3 photos that look like “red square” · best match first')
+
+    // No content phrase: exactly as before, no hint.
+    await searchFor('2025')
+    await expect(meta()).toHaveText('3 photos · ⌘-click or shift-click to select')
+
+    // Nothing matches.
+    await searchFor('xqzv kjrw')
+    await expect(page.locator('.empty')).toContainText('No photos matched “xqzv kjrw”.')
+    await expect(page.locator('.empty')).toContainText('Search looks at what’s in your photos, and at folder and file names, albums, tags, people and dates.')
+
+    const requests = await app.evaluate(() => (globalThis as unknown as { requests: string[] }).requests)
+    const remote = requests.filter((url) => !/^(file|photo|devtools|data|blob|chrome|chrome-extension):/.test(url))
+    expect(remote, 'the app made no network requests').toEqual([])
+  })
+})
+
+test('search by content while photos are being analysed (AC-7): progress, hint, and Refresh results', async () => {
+  test.setTimeout(300_000)
+  await withContentLibrary(120, {}, async (photos) => {
+    await page.getByRole('button', { name: 'Choose photo folder…' }).click()
+    const status = page.locator('.scan-status')
+    await expect(status).toContainText('Analysing photos for search…', { timeout: 90_000 })
+    await expect(status.locator('[title^="Photo Library is learning what’s in each photo"]')).toBeVisible()
+    await searchFor('red')
+    await expect(page.locator('.search-hint')).toContainText('Still analysing your photos:')
+    await expect(page.locator('.search-hint')).toContainText('Photos not analysed yet can only be found by name.')
+    // Results don't change by themselves; once analysis is done, the hint says so.
+    await expect(page.locator('.search-hint')).toContainText('All photos are now analysed.', { timeout: 240_000 })
+    await page.locator('.search-hint').getByRole('button', { name: 'Refresh results' }).click()
+    await expect(page.locator('.search-hint')).toHaveCount(0)
+    await expect(meta()).toHaveText('4 photos · 1 by name, then 3 that look like “red”, best match first')
+    await settled(photos)
+  })
+})
+
+test('content search unavailable (AC-9): says why and how to fix it; search by name works as before', async () => {
+  await withContentLibrary(0, NO_MODELS(), async (photos) => {
+    await chooseLibrary(photos)
+    // "7 new" outranks it in the top bar; once a rescan finds nothing new, it says content search is unavailable.
+    await page.getByRole('button', { name: 'Rescan' }).click()
+    await expect(page.locator('.scan-status')).toContainText(`${photos} photos · content search unavailable`)
+    const fix = 'its model file is missing. Run “npm run fetch-models”, then restart the app.'
+    await expect(page.locator('.scan-status [title]').filter({ hasText: 'content search unavailable' })).toHaveAttribute('title', fix)
+    await expect(page.locator('.search')).toHaveAttribute('placeholder', 'Search: “august 2025”, “poland”, “jake”…')
+    await searchFor('red')
+    await expect(meta()).toHaveText('1 photo · ⌘-click or shift-click to select')
+    await expect(page.locator('.search-hint .error')).toHaveText(`Content search is unavailable: ${fix}`)
+    await expect(page.locator('.search-hint')).toContainText('Names, albums, tags, people and dates are still searched.')
+    await searchFor('giraffe')
+    await expect(page.locator('.empty')).toContainText('Content search is unavailable, so only names, albums, tags, people and dates were searched.')
   })
 })

@@ -50,6 +50,8 @@ Done when every acceptance criterion passes with named evidence.
 
 ## 7. Pull request
 
-Set the spec's `Status: done`, push the branch, and open a PR: summary, the acceptance criteria as a checklist with their evidence, screenshots for UI changes, link to the spec (and `Closes #N`). The user reviews and merges; CI must be green.
+Set the spec's `Status: done`, push the branch, and open a PR: summary, the acceptance criteria as a checklist with their evidence, screenshots for UI changes, link to the spec (and `Closes #N`).
 
-Done when the PR is open and CI is green; give the user the link.
+Then watch CI to the end (`gh run watch`). If it fails, read the failing logs, fix, push, and watch again. Failures that only happen on another OS or in CI's environment (locale, no GPU, path limits, timing) are real findings: fix the cause, not just the test.
+
+Done when CI is green on every OS; give the user the link. The user reviews and merges.

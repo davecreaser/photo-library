@@ -1,11 +1,9 @@
 name: CI
 
 on:
+  # Every pushed commit on every branch, once. PRs show these checks (they attach to the commit),
+  # so there's no separate pull_request trigger running the same tests twice.
   push:
-    # Feature branches too: commits pushed by the headless agent get checked even when the
-    # PR itself was opened with a token that doesn't trigger workflows.
-    branches: [main, 'feat/**']
-  pull_request:
   workflow_dispatch: # run by hand (e.g. macOS on a PR): Actions → CI → Run workflow
 
 concurrency:
@@ -30,13 +28,22 @@ jobs:
           node-version: 24
           cache: npm
 
-      # The face models are pinned by checksum; cache them so CI doesn't re-download ~39 MB each run.
-      - uses: actions/cache@v4
+      # The models (faces 39 MB, content search 407 MB) are pinned by checksum in modelFiles.json;
+      # cache them so CI doesn't download them every run. Saved straight after install (not at the
+      # end of the job), so a failing test doesn't throw the download away.
+      - id: models
+        uses: actions/cache/restore@v4
         with:
           path: resources/models
-          key: face-models-${{ hashFiles('scripts/fetch-models.mjs') }}
+          key: models-${{ runner.os }}-${{ hashFiles('src/main/modelFiles.json') }}
 
       - run: npm ci
+
+      - if: steps.models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: resources/models
+          key: models-${{ runner.os }}-${{ hashFiles('src/main/modelFiles.json') }}
 
       - name: Typecheck
         run: npm run typecheck

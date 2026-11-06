@@ -38,6 +38,35 @@ const MONTHS: Record<string, string> = {
 // Filler words in queries like "show me photos of jake from august 2020".
 const STOP_WORDS = new Set(['show', 'me', 'all', 'the', 'photos', 'photo', 'pictures', 'pics', 'of', 'from', 'in', 'on', 'at', 'our', 'my', 'a', 'and', 'with'])
 
+/** A search split for content search (spec 0002): dates and people filter, the rest is looked for in photos. */
+export interface SearchPlan extends ParsedSearch {
+  /** For each word naming people, the ids of everyone it can mean (a photo must show one of them). */
+  personIds: number[][]
+  /** The words left, looked for in what photos show; null when there are none. */
+  phrase: string | null
+}
+
+/**
+ * Splits a search into dates, people and the content phrase. A word is a person when it is a
+ * whole word of someone's name ("jake" for "Jake Smith"), as today's search treats names.
+ * Every word still has to match by name for a photo to be a name match (parseSearch's terms).
+ */
+export function splitSearch(input: string, people: { id: number; name: string }[]): SearchPlan {
+  const parsed = parseSearch(input)
+  const byWord = new Map<string, number[]>()
+  for (const p of people) {
+    for (const word of p.name.toLowerCase().split(/\s+/).filter(Boolean)) byWord.set(word, [...(byWord.get(word) ?? []), p.id])
+  }
+  const personIds: number[][] = []
+  const content: string[] = []
+  for (const term of parsed.terms) {
+    const ids = byWord.get(term)
+    if (ids) personIds.push(ids)
+    else content.push(term)
+  }
+  return { ...parsed, personIds, phrase: content.length ? content.join(' ') : null }
+}
+
 export function parseSearch(input: string): ParsedSearch {
   const result: ParsedSearch = { terms: [] }
   const words = input

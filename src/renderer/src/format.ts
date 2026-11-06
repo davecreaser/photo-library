@@ -26,6 +26,23 @@ export function formatRange(start: string | null, end: string | null): string {
   return `${formatDate(start)} – ${formatDate(end)}`
 }
 
+/** "1 photo", "1,740 photos". */
+export function photoCount(n: number): string {
+  return `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}`
+}
+
+/**
+ * Time left for content analysis (spec 0002, Design): "estimating time…", "less than a minute
+ * left", "about 4 min left", "about 14 h left". `inBrackets` drops "left" for "(about 4 min)",
+ * and gives null while estimating so the bracket can be left out.
+ */
+export function formatTimeLeft(seconds: number | null, inBrackets = false): string | null {
+  if (seconds === null) return inBrackets ? null : 'estimating time…'
+  const minutes = Math.ceil(seconds / 60)
+  const text = seconds < 60 ? 'less than a minute' : minutes < 60 ? `about ${minutes} min` : `about ${Math.max(1, Math.round(seconds / 3600))} h`
+  return inBrackets ? text : `${text} left`
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`

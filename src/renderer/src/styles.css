@@ -279,6 +279,19 @@ input:focus {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 4px;
 }
+/* Search: where content matches start, after the name matches (spec 0002). Not a tile. */
+.grid-divider {
+  grid-column: 1 / -1;
+  margin: 10px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.search-hint {
+  margin: -4px 0 10px;
+}
 .tile {
   position: relative;
   aspect-ratio: 1;

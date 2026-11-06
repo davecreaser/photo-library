@@ -265,7 +265,8 @@ app.whenReady().then(() => {
   } catch (e) {
     console.error('Converting old merged events failed; will retry next launch', e)
   }
-  const modelsDir = join(__dirname, '..', '..', 'resources', 'models')
+  // PHOTO_LIBRARY_MODELS_DIR lets tests run without (or with other) models.
+  const modelsDir = process.env.PHOTO_LIBRARY_MODELS_DIR ?? join(__dirname, '..', '..', 'resources', 'models')
   people = new People(db, modelsDir, join(dataDir, 'cache', 'faces'), (p) => window?.webContents.send('people:progress', p))
   analysis = new Analysis({
     db,

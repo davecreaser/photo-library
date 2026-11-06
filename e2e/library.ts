@@ -61,7 +61,8 @@ export function fingerprint(root: string): string {
  * A second library for suggested-album edge cases: a named folder with a very long
  * name, an undated named folder, and enough loose photos that the first scan takes a moment.
  */
-export const LONG_FOLDER = 'a_very_long_folder_name_' + 'that_keeps_going_'.repeat(10) + 'end'
+// Long, but under Windows' 260-character path limit once inside the temp folder.
+export const LONG_FOLDER = 'a_very_long_folder_name_' + 'that_keeps_going_'.repeat(5) + 'end'
 
 export async function createEdgeLibrary(): Promise<Library> {
   const root = mkdtempSync(join(tmpdir(), 'pl-e2e-edge-'))

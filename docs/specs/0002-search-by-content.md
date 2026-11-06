@@ -263,4 +263,6 @@ None open; all resolved below. The owner supplies their five evaluation queries 
 - 2026-11-06: Strict "no match" (empty result) in this version.
 - 2026-11-06: Owner chose `sqlite-vec` behind a module over brute force (lower memory, SQL filtering, and the owner's goal of exploring vector databases), accepting the pre-1.0 dependency risk.
 - 2026-11-06: Spec trimmed from 39 to 14 acceptance criteria at the owner's request.
+- 2026-11-06 (model): SigLIP base at half precision, after a benchmark of six families, a compression test and a blind test on the owner's photos (ADR 0008). Size budget relaxed to ~800 MB by the owner; the chosen model needs 407 MB.
+- 2026-11-06 (AC-11): owner's blind test of 13 searches: SigLIP 189/260 relevant in the top 20s, ≥ 15/20 on 7 searches. Several searches need features beyond content search (a named place, a date phrase) or have fewer than 15 matching photos; the owner judged the result good enough without a per-search breakdown.
 - 2026-11-06 (design): Results never refresh by themselves during analysis; a "Refresh results" link re-runs the search. Only content matches get a divider ("Looks like …"). Analysis progress replaces the top bar's "N new" note while it runs; face progress stays with People. No UI for photos that couldn't be analysed.

@@ -22,7 +22,21 @@ interface Props {
 
 const api = window.api
 
-export function Sidebar({ library, view, albums, tags, timeline, eventCount, people, faceProgress, onNavigate, onChangeBase, onAlbumsChanged, onShowCorrections, onShowIgnored }: Props) {
+export function Sidebar({
+  library,
+  view,
+  albums,
+  tags,
+  timeline,
+  eventCount,
+  people,
+  faceProgress,
+  onNavigate,
+  onChangeBase,
+  onAlbumsChanged,
+  onShowCorrections,
+  onShowIgnored
+}: Props) {
   const [openYears, setOpenYears] = useState<Set<string>>(new Set())
   // Which album is being created under (null = top level), renamed, or confirmed for deletion.
   const [creatingUnder, setCreatingUnder] = useState<number | null | undefined>(undefined)
@@ -51,13 +65,27 @@ export function Sidebar({ library, view, albums, tags, timeline, eventCount, peo
             {renaming === a.id ? (
               <InlineInput
                 initial={a.name}
-                onSubmit={async (name) => { await api.renameAlbum(a.id, name); setRenaming(null); onAlbumsChanged() }}
+                onSubmit={async (name) => {
+                  await api.renameAlbum(a.id, name)
+                  setRenaming(null)
+                  onAlbumsChanged()
+                }}
                 onCancel={() => setRenaming(null)}
               />
             ) : confirmDelete === a.id ? (
               <div className="confirm" style={{ paddingLeft: 12 + depth * 14 }}>
                 <span>Delete album “{a.name}”? Photos stay on disk.</span>
-                <button className="danger" onClick={async () => { await api.deleteAlbum(a.id); setConfirmDelete(null); if (isActive({ kind: 'album', id: a.id })) onNavigate({ kind: 'all' }); onAlbumsChanged() }}>Delete</button>
+                <button
+                  className="danger"
+                  onClick={async () => {
+                    await api.deleteAlbum(a.id)
+                    setConfirmDelete(null)
+                    if (isActive({ kind: 'album', id: a.id })) onNavigate({ kind: 'all' })
+                    onAlbumsChanged()
+                  }}
+                >
+                  Delete
+                </button>
                 <button onClick={() => setConfirmDelete(null)}>Cancel</button>
               </div>
             ) : (
@@ -69,9 +97,15 @@ export function Sidebar({ library, view, albums, tags, timeline, eventCount, peo
                 <span className="label">📁 {a.name}</span>
                 <span className="count">{a.photoCount}</span>
                 <span className="actions" onClick={(e) => e.stopPropagation()}>
-                  <button title="New sub-album" onClick={() => setCreatingUnder(a.id)}>＋</button>
-                  <button title="Rename" onClick={() => setRenaming(a.id)}>✎</button>
-                  <button title="Delete album" onClick={() => setConfirmDelete(a.id)}>✕</button>
+                  <button title="New sub-album" onClick={() => setCreatingUnder(a.id)}>
+                    ＋
+                  </button>
+                  <button title="Rename" onClick={() => setRenaming(a.id)}>
+                    ✎
+                  </button>
+                  <button title="Delete album" onClick={() => setConfirmDelete(a.id)}>
+                    ✕
+                  </button>
                 </span>
               </div>
             )}
@@ -131,7 +165,9 @@ export function Sidebar({ library, view, albums, tags, timeline, eventCount, peo
       <section>
         <h2>
           Albums
-          <button title="New album" onClick={() => setCreatingUnder(null)}>＋</button>
+          <button title="New album" onClick={() => setCreatingUnder(null)}>
+            ＋
+          </button>
         </h2>
         {creatingUnder === null && <InlineInput placeholder="Album name" onSubmit={createAlbum} onCancel={() => setCreatingUnder(undefined)} />}
         {albums.length === 0 && creatingUnder === undefined && <p className="hint">Albums are virtual folders. Adding photos never moves the files.</p>}
@@ -156,7 +192,16 @@ export function Sidebar({ library, view, albums, tags, timeline, eventCount, peo
           <div key={y}>
             <div className={`nav-item ${isActive({ kind: 'year', year: y }) ? 'active' : ''}`} onClick={() => onNavigate({ kind: 'year', year: y })}>
               <span className="label">
-                <span className="disclosure" onClick={(e) => { e.stopPropagation(); toggleYear(y) }}>{openYears.has(y) ? '▾' : '▸'}</span> {y}
+                <span
+                  className="disclosure"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleYear(y)
+                  }}
+                >
+                  {openYears.has(y) ? '▾' : '▸'}
+                </span>{' '}
+                {y}
               </span>
               <span className="count">{yearCount(y)}</span>
             </div>
@@ -177,27 +222,48 @@ export function Sidebar({ library, view, albums, tags, timeline, eventCount, peo
         ))}
         {library.undatedCount > 0 && (
           <div className={`nav-item ${isActive({ kind: 'undated' }) ? 'active' : ''}`} onClick={() => onNavigate({ kind: 'undated' })}>
-            <span className="label"><span className="disclosure" /> Undated</span>
+            <span className="label">
+              <span className="disclosure" /> Undated
+            </span>
             <span className="count">{library.undatedCount}</span>
           </div>
         )}
       </section>
 
       <footer className="sidebar-footer">
-        <button className="link" onClick={onShowCorrections}>Camera date corrections…</button>
-        <button className="link" onClick={onShowIgnored}>Ignored folders…</button>
-        <div className="base-path" title={library.basePath ?? ''}>📂 {library.basePath}</div>
+        <button className="link" onClick={onShowCorrections}>
+          Camera date corrections…
+        </button>
+        <button className="link" onClick={onShowIgnored}>
+          Ignored folders…
+        </button>
+        <div className="base-path" title={library.basePath ?? ''}>
+          📂 {library.basePath}
+        </div>
         {library.missingCount > 0 && (
           <div className="hint">
             {library.missingCount} photos no longer found in this folder (hidden). If they come back, their albums and tags return too.{' '}
             {confirmForget ? (
               <span className="confirm-inline">
                 Forget their albums/tags? Files are not touched.{' '}
-                <button className="link danger-link" onClick={async () => { await api.forgetMissing(); setConfirmForget(false); onAlbumsChanged() }}>Forget</button>{' '}
-                <button className="link" onClick={() => setConfirmForget(false)}>Cancel</button>
+                <button
+                  className="link danger-link"
+                  onClick={async () => {
+                    await api.forgetMissing()
+                    setConfirmForget(false)
+                    onAlbumsChanged()
+                  }}
+                >
+                  Forget
+                </button>{' '}
+                <button className="link" onClick={() => setConfirmForget(false)}>
+                  Cancel
+                </button>
               </span>
             ) : (
-              <button className="link" onClick={() => setConfirmForget(true)}>Forget them…</button>
+              <button className="link" onClick={() => setConfirmForget(true)}>
+                Forget them…
+              </button>
             )}
           </div>
         )}

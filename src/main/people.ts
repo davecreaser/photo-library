@@ -100,7 +100,9 @@ export class People {
         }
         const ids = this.db.saveFaces(photo.id, faces, FACE_MODEL_VERSION)
         for (let i = 0; i < ids.length; i++) {
-          const jpeg = await sharp(faces[i].crop, { raw: { width: 112, height: 112, channels: 3 } }).jpeg({ quality: 85 }).toBuffer()
+          const jpeg = await sharp(faces[i].crop, { raw: { width: 112, height: 112, channels: 3 } })
+            .jpeg({ quality: 85 })
+            .toBuffer()
           await writeAppFile(this.cropPath(ids[i]), jpeg)
         }
       }

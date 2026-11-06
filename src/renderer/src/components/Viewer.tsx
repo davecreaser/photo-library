@@ -50,9 +50,31 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
         {/* Thumbnail first so something shows instantly, full image layered on top. */}
         <img className="viewer-img placeholder" src={`photo://thumb/${photo.id}`} alt="" />
         <img key={photo.id} className="viewer-img" src={`photo://full/${photo.id}`} alt={photo.fileName} onClick={(e) => e.stopPropagation()} />
-        {index > 0 && <button className="nav prev" onClick={(e) => { e.stopPropagation(); onIndexChange(index - 1) }}>‹</button>}
-        {index < photos.length - 1 && <button className="nav next" onClick={(e) => { e.stopPropagation(); onIndexChange(index + 1) }}>›</button>}
-        <button className="close" onClick={onClose} title="Close (Esc)">✕</button>
+        {index > 0 && (
+          <button
+            className="nav prev"
+            onClick={(e) => {
+              e.stopPropagation()
+              onIndexChange(index - 1)
+            }}
+          >
+            ‹
+          </button>
+        )}
+        {index < photos.length - 1 && (
+          <button
+            className="nav next"
+            onClick={(e) => {
+              e.stopPropagation()
+              onIndexChange(index + 1)
+            }}
+          >
+            ›
+          </button>
+        )}
+        <button className="close" onClick={onClose} title="Close (Esc)">
+          ✕
+        </button>
       </div>
 
       <aside className="viewer-info">
@@ -61,7 +83,10 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
           <button
             className={`star ${details?.favorite ? 'on' : ''}`}
             title={details?.favorite ? 'Remove from favourites' : 'Add to favourites'}
-            onClick={async () => { await api.setFavorite([photo.id], !details?.favorite); await changed() }}
+            onClick={async () => {
+              await api.setFavorite([photo.id], !details?.favorite)
+              await changed()
+            }}
           >
             {details?.favorite ? '★' : '☆'}
           </button>
@@ -70,17 +95,42 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
         {photo.takenAtRaw && <p className="hint">Date corrected for the camera’s clock. The camera recorded {formatDateTime(photo.takenAtRaw)}.</p>}
         <dl>
           <dt>File</dt>
-          <dd className="path" title={photo.path}>{photo.fileName}</dd>
-          {photo.camera && (<><dt>Camera</dt><dd>{photo.camera}</dd></>)}
-          {photo.width && photo.height && (<><dt>Size</dt><dd>{photo.width} × {photo.height} · {formatBytes(photo.size)}</dd></>)}
-          {photo.lat != null && photo.lon != null && (<><dt>Location</dt><dd>{photo.lat.toFixed(5)}, {photo.lon.toFixed(5)}</dd></>)}
+          <dd className="path" title={photo.path}>
+            {photo.fileName}
+          </dd>
+          {photo.camera && (
+            <>
+              <dt>Camera</dt>
+              <dd>{photo.camera}</dd>
+            </>
+          )}
+          {photo.width && photo.height && (
+            <>
+              <dt>Size</dt>
+              <dd>
+                {photo.width} × {photo.height} · {formatBytes(photo.size)}
+              </dd>
+            </>
+          )}
+          {photo.lat != null && photo.lon != null && (
+            <>
+              <dt>Location</dt>
+              <dd>
+                {photo.lat.toFixed(5)}, {photo.lon.toFixed(5)}
+              </dd>
+            </>
+          )}
         </dl>
         <button onClick={() => api.revealInFinder(photo.id)}>Show in Finder</button>
         {details && details.locations.length > 1 && (
           <>
             <h4>Found in {details.locations.length} places</h4>
             <ul className="locations">
-              {details.locations.map((l) => <li key={l} title={l}>{l.split(/[\\/]/).slice(-3).join('/')}</li>)}
+              {details.locations.map((l) => (
+                <li key={l} title={l}>
+                  {l.split(/[\\/]/).slice(-3).join('/')}
+                </li>
+              ))}
             </ul>
             <p className="hint">Identical copies are shown once. Albums and tags apply to all of them.</p>
           </>
@@ -95,14 +145,29 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
                   <img src={`photo://face/${f.id}`} alt="" />
                   {f.name ? (
                     <>
-                      <span>{f.name}{f.auto && <span className="hint"> (auto)</span>}</span>
-                      <button className="link" title={`Not ${f.name}`} onClick={async () => { await api.rejectFace(f.id); await changed() }}>✕</button>
+                      <span>
+                        {f.name}
+                        {f.auto && <span className="hint"> (auto)</span>}
+                      </span>
+                      <button
+                        className="link"
+                        title={`Not ${f.name}`}
+                        onClick={async () => {
+                          await api.rejectFace(f.id)
+                          await changed()
+                        }}
+                      >
+                        ✕
+                      </button>
                     </>
                   ) : (
                     <TagInput
                       tags={people.map((p) => ({ id: p.id, name: p.name }))}
                       placeholder="Who’s this?"
-                      onAdd={async (name) => { await api.nameFace(f.id, name); await changed() }}
+                      onAdd={async (name) => {
+                        await api.nameFace(f.id, name)
+                        await changed()
+                      }}
                     />
                   )}
                 </div>
@@ -116,7 +181,15 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
           {details?.albums.map((a) => (
             <span key={a.id} className="chip">
               📁 {a.name}
-              <button title="Remove from album" onClick={async () => { await api.removeFromAlbum(a.id, [photo.id]); await changed() }}>✕</button>
+              <button
+                title="Remove from album"
+                onClick={async () => {
+                  await api.removeFromAlbum(a.id, [photo.id])
+                  await changed()
+                }}
+              >
+                ✕
+              </button>
             </span>
           ))}
         </div>
@@ -126,7 +199,11 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
             <AlbumPicker
               albums={albums}
               exclude={details?.albums.map((a) => a.id)}
-              onPick={async (id) => { await api.addToAlbum(id, [photo.id]); setPicking(false); await changed() }}
+              onPick={async (id) => {
+                await api.addToAlbum(id, [photo.id])
+                setPicking(false)
+                await changed()
+              }}
               onClose={() => setPicking(false)}
             />
           )}
@@ -137,13 +214,29 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
           {details?.tags.map((t) => (
             <span key={t.id} className="chip">
               #{t.name}
-              <button title="Remove tag" onClick={async () => { await api.removeTag([photo.id], t.id); await changed() }}>✕</button>
+              <button
+                title="Remove tag"
+                onClick={async () => {
+                  await api.removeTag([photo.id], t.id)
+                  await changed()
+                }}
+              >
+                ✕
+              </button>
             </span>
           ))}
         </div>
-        <TagInput tags={tags} onAdd={async (name) => { await api.addTag([photo.id], name); await changed() }} />
+        <TagInput
+          tags={tags}
+          onAdd={async (name) => {
+            await api.addTag([photo.id], name)
+            await changed()
+          }}
+        />
 
-        <p className="hint position">{index + 1} of {photos.length} · ← → to browse</p>
+        <p className="hint position">
+          {index + 1} of {photos.length} · ← → to browse
+        </p>
       </aside>
     </div>
   )

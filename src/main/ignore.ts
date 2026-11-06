@@ -21,7 +21,10 @@ export class IgnoreRules {
   private paths: string[][]
 
   constructor(rules: string[]) {
-    const clean = rules.map(normaliseRule).filter(Boolean).map((r) => r.toLowerCase())
+    const clean = rules
+      .map(normaliseRule)
+      .filter(Boolean)
+      .map((r) => r.toLowerCase())
     this.names = new Set(clean.filter((r) => !r.includes('/')))
     this.paths = clean.filter((r) => r.includes('/')).map((r) => r.split('/'))
   }

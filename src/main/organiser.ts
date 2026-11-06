@@ -46,8 +46,14 @@ export class Organiser {
     const groups = this.db.eventGroups()
     const members = events.flatMap((e) => (e.groupId ? groups.find((g) => g.id === e.groupId)!.members : [e.id]))
     for (const e of events) if (e.groupId) this.db.deleteEventGroup(e.groupId)
-    const starts = events.map((e) => e.start).filter((d): d is string => !!d).sort()
-    const ends = events.map((e) => e.end).filter((d): d is string => !!d).sort()
+    const starts = events
+      .map((e) => e.start)
+      .filter((d): d is string => !!d)
+      .sort()
+    const ends = events
+      .map((e) => e.end)
+      .filter((d): d is string => !!d)
+      .sort()
     const id = this.db.addEventGroup({ name, start: starts[0] ?? null, end: ends.at(-1) ?? null, members })
     this.invalidate()
     return `g:${id}`

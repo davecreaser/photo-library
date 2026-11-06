@@ -108,7 +108,9 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
             title={`${p.fileName} · ${formatDate(p.takenAt)}`}
           >
             <img src={`photo://thumb/${p.id}`} loading="lazy" decoding="async" alt="" />
-            <span className="check" onClick={(e) => toggle(e, i, p)}>{selected.has(p.id) ? '✓' : ''}</span>
+            <span className="check" onClick={(e) => toggle(e, i, p)}>
+              {selected.has(p.id) ? '✓' : ''}
+            </span>
             {p.favorite && <span className="fav-badge">★</span>}
           </div>
         ))}

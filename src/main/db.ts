@@ -329,7 +329,9 @@ export class LibraryDb {
       this.correctionsCache ??= this.corrections()
       const takenAt = correctedTime(meta.takenAt, meta.camera, this.correctionsCache)
       this.db
-        .prepare('UPDATE photos SET size = ?, taken_at_raw = ?, taken_at = ?, width = ?, height = ?, orientation = ?, camera = ?, lat = ?, lon = ?, present = 1 WHERE id = ?')
+        .prepare(
+          'UPDATE photos SET size = ?, taken_at_raw = ?, taken_at = ?, width = ?, height = ?, orientation = ?, camera = ?, lat = ?, lon = ?, present = 1 WHERE id = ?'
+        )
         .run(meta.size, meta.takenAt, takenAt, meta.width, meta.height, meta.orientation, meta.camera, meta.lat, meta.lon, photoId)
       return outcome
     })
@@ -346,7 +348,9 @@ export class LibraryDb {
 
   /** Moves albums, tags and an explicit favourite from `dropId` onto `keepId`, then deletes `dropId`. */
   private mergeInto(keepId: number, dropId: number): void {
-    this.db.prepare('INSERT OR IGNORE INTO album_photos (album_id, photo_id, added_at) SELECT album_id, ?, added_at FROM album_photos WHERE photo_id = ?').run(keepId, dropId)
+    this.db
+      .prepare('INSERT OR IGNORE INTO album_photos (album_id, photo_id, added_at) SELECT album_id, ?, added_at FROM album_photos WHERE photo_id = ?')
+      .run(keepId, dropId)
     this.db.prepare('INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) SELECT ?, tag_id FROM photo_tags WHERE photo_id = ?').run(keepId, dropId)
     this.db.prepare('UPDATE photos SET favorite = COALESCE(favorite, (SELECT favorite FROM photos WHERE id = ?)) WHERE id = ?').run(dropId, keepId)
     // Same content, so the same faces: keep whichever copy has them analysed (and named).
@@ -379,7 +383,9 @@ export class LibraryDb {
 
   private deletePhotosWhere(condition: string): Forgotten {
     const hashes = (this.db.prepare(`SELECT hash FROM photos WHERE ${condition}`).all() as Row[]).map((r) => r.hash as string).filter(Boolean)
-    const faceIds = (this.db.prepare(`SELECT id FROM faces WHERE photo_id IN (SELECT id FROM photos WHERE ${condition})`).all() as Row[]).map((r) => r.id as number)
+    const faceIds = (this.db.prepare(`SELECT id FROM faces WHERE photo_id IN (SELECT id FROM photos WHERE ${condition})`).all() as Row[]).map(
+      (r) => r.id as number
+    )
     this.db.exec(`DELETE FROM photos WHERE ${condition}`)
     return { hashes, faceIds }
   }
@@ -426,9 +432,8 @@ export class LibraryDb {
   // --- browsing ---
 
   getThumbSource(id: number): ThumbSource | null {
-    const r = this.db
-      .prepare(`SELECT p.id, p.hash, p.orientation, f.path FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE} WHERE p.id = ?`)
-      .get(id) as Row | undefined
+    const r = this.db.prepare(`SELECT p.id, p.hash, p.orientation, f.path FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE} WHERE p.id = ?`).get(id) as
+      Row | undefined
     if (!r) return null
     const path = r.path as string
     return { id: r.id as number, hash: (r.hash as string) ?? null, path, ext: extname(path).toLowerCase(), orientation: (r.orientation as number) ?? null }
@@ -503,7 +508,9 @@ export class LibraryDb {
       .all(id) as Row[]
     const locations = this.db.prepare('SELECT path FROM files WHERE photo_id = ? AND missing = 0 ORDER BY path').all(id) as Row[]
     const faces = this.db
-      .prepare('SELECT f.id, f.person_id, pe.name, f.assigned_by, f.x, f.y, f.w, f.h FROM faces f LEFT JOIN people pe ON pe.id = f.person_id WHERE f.photo_id = ? ORDER BY f.x')
+      .prepare(
+        'SELECT f.id, f.person_id, pe.name, f.assigned_by, f.x, f.y, f.w, f.h FROM faces f LEFT JOIN people pe ON pe.id = f.person_id WHERE f.photo_id = ? ORDER BY f.x'
+      )
       .all(id) as Row[]
     return {
       ...toPhoto(r),
@@ -515,7 +522,10 @@ export class LibraryDb {
         personId: (f.person_id as number) ?? null,
         name: (f.name as string) ?? null,
         auto: f.assigned_by === 'auto',
-        x: f.x as number, y: f.y as number, w: f.w as number, h: f.h as number
+        x: f.x as number,
+        y: f.y as number,
+        w: f.w as number,
+        h: f.h as number
       }))
     }
   }
@@ -533,9 +543,7 @@ export class LibraryDb {
 
   /** Present photos with their folders, for event detection and clock-error detection. */
   photosForOrganising(basePath: string): PhotoForOrganising[] {
-    const rows = this.db
-      .prepare('SELECT id, camera, taken_at, taken_at_raw, COALESCE(favorite, 0) AS fav FROM photos WHERE present = 1')
-      .all() as Row[]
+    const rows = this.db.prepare('SELECT id, camera, taken_at, taken_at_raw, COALESCE(favorite, 0) AS fav FROM photos WHERE present = 1').all() as Row[]
     const dirs = new Map<number, string[]>()
     for (const f of this.db.prepare('SELECT photo_id, path FROM files WHERE missing = 0').all() as Row[]) {
       const id = f.photo_id as number
@@ -572,24 +580,42 @@ export class LibraryDb {
          ORDER BY p.taken_at IS NULL, p.taken_at DESC LIMIT ?`
       )
       .all(version, limit) as Row[]
-    return rows.map((r) => ({ id: r.id as number, hash: (r.hash as string) ?? null, path: r.path as string, ext: extname(r.path as string).toLowerCase(), orientation: (r.orientation as number) ?? null }))
+    return rows.map((r) => ({
+      id: r.id as number,
+      hash: (r.hash as string) ?? null,
+      path: r.path as string,
+      ext: extname(r.path as string).toLowerCase(),
+      orientation: (r.orientation as number) ?? null
+    }))
   }
 
   faceProgress(version: number): { done: number; total: number } {
-    const r = this.db
-      .prepare('SELECT count(*) AS total, sum(faces_version >= ?) AS done FROM photos WHERE present = 1')
-      .get(version) as Row
+    const r = this.db.prepare('SELECT count(*) AS total, sum(faces_version >= ?) AS done FROM photos WHERE present = 1').get(version) as Row
     return { done: Number(r.done ?? 0), total: Number(r.total ?? 0) }
   }
 
   /** Replaces a photo's faces with a fresh analysis. Returns the new face ids, in order. */
-  saveFaces(photoId: number, faces: { x: number; y: number; w: number; h: number; score: number; embedding: Float32Array | null }[], version: number): number[] {
+  saveFaces(
+    photoId: number,
+    faces: { x: number; y: number; w: number; h: number; score: number; embedding: Float32Array | null }[],
+    version: number
+  ): number[] {
     return this.transaction(() => {
       this.db.prepare('DELETE FROM faces WHERE photo_id = ?').run(photoId)
       const insert = this.db.prepare('INSERT INTO faces (photo_id, x, y, w, h, score, embedding) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id')
       const ids = faces.map(
         (f) =>
-          (insert.get(photoId, f.x, f.y, f.w, f.h, f.score, f.embedding ? new Uint8Array(f.embedding.buffer, f.embedding.byteOffset, f.embedding.byteLength) : null) as Row).id as number
+          (
+            insert.get(
+              photoId,
+              f.x,
+              f.y,
+              f.w,
+              f.h,
+              f.score,
+              f.embedding ? new Uint8Array(f.embedding.buffer, f.embedding.byteOffset, f.embedding.byteLength) : null
+            ) as Row
+          ).id as number
       )
       this.db.prepare('UPDATE photos SET faces_version = ? WHERE id = ?').run(version, photoId)
       return ids
@@ -676,7 +702,12 @@ export class LibraryDb {
   confirmFaces(faceIds: number[], personId: number): void {
     const assign = this.db.prepare("UPDATE faces SET person_id = ?, assigned_by = 'user', cluster = NULL WHERE id = ?")
     const unreject = this.db.prepare('DELETE FROM face_rejections WHERE face_id = ? AND person_id = ?')
-    this.transaction(() => faceIds.forEach((id) => { assign.run(personId, id); unreject.run(id, personId) }))
+    this.transaction(() =>
+      faceIds.forEach((id) => {
+        assign.run(personId, id)
+        unreject.run(id, personId)
+      })
+    )
   }
 
   personFaces(personId: number): PersonFace[] {

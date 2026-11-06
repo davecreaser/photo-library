@@ -76,7 +76,13 @@ export class FaceAnalyser {
     const detScale = Math.min(1, DET_LONG_SIDE / Math.max(W, H))
     const dW = Math.round(W * detScale)
     const dH = Math.round(H * detScale)
-    const det = detScale === 1 ? data : await sharp(data, { raw: { width: W, height: H, channels: 3 } }).resize(dW, dH).raw().toBuffer()
+    const det =
+      detScale === 1
+        ? data
+        : await sharp(data, { raw: { width: W, height: H, channels: 3 } })
+            .resize(dW, dH)
+            .raw()
+            .toBuffer()
 
     // The whole image (shrunk to 640) catches big faces; 640px tiles at full detection size catch small ones.
     const found: RawDetection[] = []
@@ -142,7 +148,10 @@ export class FaceAnalyser {
         if (cx > outW || cy > outH) continue
         const map = (v: number, o: number) => o + v / scale
         dets.push({
-          x1: map(d.x1, rx), y1: map(d.y1, ry), x2: map(d.x2, rx), y2: map(d.y2, ry),
+          x1: map(d.x1, rx),
+          y1: map(d.y1, ry),
+          x2: map(d.x2, rx),
+          y2: map(d.y2, ry),
           score: d.score,
           kps: d.kps.map((v, i) => map(v, i % 2 === 0 ? rx : ry))
         })
@@ -185,8 +194,13 @@ export function normalise(v: Float32Array): Float32Array {
 
 /** Decodes one YuNet output stride (same maths as OpenCV's FaceDetectorYN). */
 export function decodeYuNet(
-  cls: Float32Array, obj: Float32Array, bbox: Float32Array, kps: Float32Array,
-  stride: number, inputSize: number, threshold: number
+  cls: Float32Array,
+  obj: Float32Array,
+  bbox: Float32Array,
+  kps: Float32Array,
+  stride: number,
+  inputSize: number,
+  threshold: number
 ): RawDetection[] {
   const cols = inputSize / stride
   const rows = inputSize / stride
@@ -234,15 +248,28 @@ const TEMPLATE = [38.2946, 51.6963, 73.5318, 51.5014, 56.0252, 71.7366, 41.5493,
  */
 export function similarityTransform(src: number[], dst: number[]): [number, number, number, number] {
   const n = src.length / 2
-  let sx = 0, sy = 0, dx = 0, dy = 0
+  let sx = 0,
+    sy = 0,
+    dx = 0,
+    dy = 0
   for (let i = 0; i < n; i++) {
-    sx += src[2 * i]; sy += src[2 * i + 1]; dx += dst[2 * i]; dy += dst[2 * i + 1]
+    sx += src[2 * i]
+    sy += src[2 * i + 1]
+    dx += dst[2 * i]
+    dy += dst[2 * i + 1]
   }
-  sx /= n; sy /= n; dx /= n; dy /= n
-  let num1 = 0, num2 = 0, den = 0
+  sx /= n
+  sy /= n
+  dx /= n
+  dy /= n
+  let num1 = 0,
+    num2 = 0,
+    den = 0
   for (let i = 0; i < n; i++) {
-    const px = src[2 * i] - sx, py = src[2 * i + 1] - sy
-    const qx = dst[2 * i] - dx, qy = dst[2 * i + 1] - dy
+    const px = src[2 * i] - sx,
+      py = src[2 * i + 1] - sy
+    const qx = dst[2 * i] - dx,
+      qy = dst[2 * i + 1] - dy
     num1 += px * qx + py * qy
     num2 += px * qy - py * qx
     den += px * px + py * py
@@ -264,8 +291,10 @@ export function alignFace(img: Buffer, W: number, H: number, kps: number[]): Buf
       const v = y - ty
       const srcX = (a * u + b * v) / det
       const srcY = (-b * u + a * v) / det
-      const x0 = Math.floor(srcX), y0 = Math.floor(srcY)
-      const fx = srcX - x0, fy = srcY - y0
+      const x0 = Math.floor(srcX),
+        y0 = Math.floor(srcY)
+      const fx = srcX - x0,
+        fy = srcY - y0
       for (let ch = 0; ch < 3; ch++) {
         const p = (xx: number, yy: number) => (xx < 0 || yy < 0 || xx >= W || yy >= H ? 0 : img[(yy * W + xx) * 3 + ch])
         const val = p(x0, y0) * (1 - fx) * (1 - fy) + p(x0 + 1, y0) * fx * (1 - fy) + p(x0, y0 + 1) * (1 - fx) * fy + p(x0 + 1, y0 + 1) * fx * fy

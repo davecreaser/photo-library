@@ -23,10 +23,25 @@ export class ProtectedPathError extends Error {
 // Function name -> indexes of the arguments that are written to. Covers both
 // `fs.x` / `fs.xSync` (callback and sync) and `fs.promises.x`.
 const WRITE_TARGETS: Record<string, number[]> = {
-  writeFile: [0], appendFile: [0], truncate: [0],
-  unlink: [0], rmdir: [0], rm: [0], mkdir: [0], mkdtemp: [0],
-  rename: [0, 1], copyFile: [1], cp: [1], link: [1], symlink: [1],
-  utimes: [0], lutimes: [0], chmod: [0], lchmod: [0], chown: [0], lchown: [0],
+  writeFile: [0],
+  appendFile: [0],
+  truncate: [0],
+  unlink: [0],
+  rmdir: [0],
+  rm: [0],
+  mkdir: [0],
+  mkdtemp: [0],
+  rename: [0, 1],
+  copyFile: [1],
+  cp: [1],
+  link: [1],
+  symlink: [1],
+  utimes: [0],
+  lutimes: [0],
+  chmod: [0],
+  lchmod: [0],
+  chown: [0],
+  lchown: [0],
   createWriteStream: [0]
 }
 

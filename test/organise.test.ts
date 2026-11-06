@@ -121,9 +121,16 @@ test('merged events stay merged, absorb later photos in their dates, but not oth
   const trip = merged.find((e) => e.name === 'Norway')!
   assert.deepEqual(trip.photoIds.sort(), [1, 2, 3, 4])
   assert.equal(trip.groupId, 1)
-  assert.ok(merged.some((e) => e.name === 'Oslo Museum'), 'named folder events are not swallowed')
+  assert.ok(
+    merged.some((e) => e.name === 'Oslo Museum'),
+    'named folder events are not swallowed'
+  )
 
   // A photo added later changes the automatic event's id (it becomes that cluster's first photo); the dates still match.
   const later = detectEvents([...photos, p(6, '2026-02-01T20:00:00', 'unsorted')])
-  assert.ok(applyGroups(later, [group]).find((e) => e.name === 'Norway')!.photoIds.includes(6))
+  assert.ok(
+    applyGroups(later, [group])
+      .find((e) => e.name === 'Norway')!
+      .photoIds.includes(6)
+  )
 })

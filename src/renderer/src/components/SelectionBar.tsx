@@ -52,7 +52,15 @@ export function SelectionBar({ selected, albums, tags, currentAlbumId, onDone, o
           onDone(false)
         }}
       />
-      <button onClick={async () => { await api.setFavorite(selected, true); flash('Added to favourites'); onDone(false) }}>★ Favourite</button>
+      <button
+        onClick={async () => {
+          await api.setFavorite(selected, true)
+          flash('Added to favourites')
+          onDone(false)
+        }}
+      >
+        ★ Favourite
+      </button>
       {currentAlbumId !== null && (
         <button
           onClick={async () => {

@@ -193,9 +193,7 @@ function registerIpc(): void {
     await cleanUpCaches(forgotten)
   })
 
-  ipcMain.handle('photos:query', (_e, filter: PhotoFilter) =>
-    db.queryPhotos(filter, filter.eventId ? organiser.eventPhotoIds(filter.eventId) : undefined)
-  )
+  ipcMain.handle('photos:query', (_e, filter: PhotoFilter) => db.queryPhotos(filter, filter.eventId ? organiser.eventPhotoIds(filter.eventId) : undefined))
   ipcMain.handle('photos:get', (_e, id: number) => db.getPhoto(id))
   ipcMain.handle('photos:timeline', () => db.getTimeline())
   ipcMain.handle('photos:reveal', (_e, id: number) => {

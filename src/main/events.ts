@@ -135,8 +135,14 @@ export function applyGroups(events: DetectedEvent[], groups: EventGroup[]): Dete
     if (members.length === 0) continue
     members.forEach((e) => used.add(e.id))
     const all = members.flatMap((e) => e.photoIds)
-    const starts = members.map((e) => e.start).filter((d): d is string => !!d).sort()
-    const ends = members.map((e) => e.end).filter((d): d is string => !!d).sort()
+    const starts = members
+      .map((e) => e.start)
+      .filter((d): d is string => !!d)
+      .sort()
+    const ends = members
+      .map((e) => e.end)
+      .filter((d): d is string => !!d)
+      .sort()
     result.push({
       id: `g:${g.id}`,
       groupId: g.id,

@@ -31,7 +31,11 @@ function NameInput({ people, onSubmit }: { people: Person[]; onSubmit: (name: st
           }
         }}
       />
-      <datalist id={listId}>{people.map((p) => <option key={p.id} value={p.name} />)}</datalist>
+      <datalist id={listId}>
+        {people.map((p) => (
+          <option key={p.id} value={p.name} />
+        ))}
+      </datalist>
     </>
   )
 }
@@ -75,18 +79,22 @@ export function PeopleView({ people, progress, version, onOpenPerson, onChanged 
       <section>
         <h2>Who’s this?</h2>
         {groups.length === 0 ? (
-          <p className="hint">{progress?.phase === 'analysing' ? 'Groups will appear here shortly.' : 'No unnamed groups of faces. Everyone found has a name!'}</p>
+          <p className="hint">
+            {progress?.phase === 'analysing' ? 'Groups will appear here shortly.' : 'No unnamed groups of faces. Everyone found has a name!'}
+          </p>
         ) : (
           <p className="hint">
-            Similar faces are grouped. Type a name once to name the whole group; future photos of them are recognised automatically.
-            Two groups of the same person? Give both the same name.
+            Similar faces are grouped. Type a name once to name the whole group; future photos of them are recognised automatically. Two groups of the same
+            person? Give both the same name.
           </p>
         )}
         <div className="group-grid">
           {visible.map((g) => (
             <div key={g.id} className="face-group">
               <div className="face-strip">
-                {g.sampleFaceIds.slice(0, 6).map((id) => <img key={id} src={`photo://face/${id}`} alt="" />)}
+                {g.sampleFaceIds.slice(0, 6).map((id) => (
+                  <img key={id} src={`photo://face/${id}`} alt="" />
+                ))}
               </div>
               <div className="face-group-footer">
                 <span className="event-meta">{g.photoCount} photos</span>

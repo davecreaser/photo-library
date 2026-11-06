@@ -12,7 +12,21 @@ import { join, relative } from 'node:path'
 const SRC = join(import.meta.dirname, '..', 'src')
 const WRITERS = new Set(['main/appFiles.ts', 'main/fsGuard.ts'])
 // fs functions that only read.
-const READ_ONLY_FS = new Set(['opendir', 'stat', 'lstat', 'readFile', 'readdir', 'realpath', 'access', 'constants', 'existsSync', 'statSync', 'readFileSync', 'readdirSync', 'createReadStream'])
+const READ_ONLY_FS = new Set([
+  'opendir',
+  'stat',
+  'lstat',
+  'readFile',
+  'readdir',
+  'realpath',
+  'access',
+  'constants',
+  'existsSync',
+  'statSync',
+  'readFileSync',
+  'readdirSync',
+  'createReadStream'
+])
 const FORBIDDEN = [
   /child_process/, // external programs could do anything
   /\btrashItem\b|\bmoveItemToTrash\b/, // Electron's "move to Trash"
@@ -36,7 +50,10 @@ test('source audit: only appFiles.ts and fsGuard.ts can write', () => {
     const code = fs.readFileSync(file, 'utf8')
     for (const pattern of FORBIDDEN) if (pattern.test(code)) problems.push(`${rel}: matches ${pattern}`)
     for (const m of code.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"](?:node:)?fs(?:\/promises)?['"]/g)) {
-      for (const name of m[1].split(',').map((n) => n.trim().split(/\s+as\s+/)[0]).filter(Boolean)) {
+      for (const name of m[1]
+        .split(',')
+        .map((n) => n.trim().split(/\s+as\s+/)[0])
+        .filter(Boolean)) {
         if (!READ_ONLY_FS.has(name)) problems.push(`${rel}: imports fs.${name}`)
       }
     }
@@ -60,7 +77,12 @@ const heic = join(heicDir, 'IMG_0002.HEIC')
 if (process.platform === 'darwin') {
   fs.mkdirSync(heicDir)
   const sharp = (await import('sharp')).default
-  fs.writeFileSync(join(root, 'src.jpg'), await sharp({ create: { width: 40, height: 30, channels: 3, background: '#a33' } }).jpeg().toBuffer())
+  fs.writeFileSync(
+    join(root, 'src.jpg'),
+    await sharp({ create: { width: 40, height: 30, channels: 3, background: '#a33' } })
+      .jpeg()
+      .toBuffer()
+  )
   execFileSync('/usr/bin/sips', ['-s', 'format', 'heic', join(root, 'src.jpg'), '--out', heic], { stdio: 'ignore' })
 }
 

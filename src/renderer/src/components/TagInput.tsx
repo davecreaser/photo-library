@@ -22,7 +22,9 @@ export function TagInput(props: { tags: Tag[]; onAdd: (name: string) => void; pl
         }}
       />
       <datalist id={listId}>
-        {props.tags.map((t) => <option key={t.id} value={t.name} />)}
+        {props.tags.map((t) => (
+          <option key={t.id} value={t.name} />
+        ))}
       </datalist>
     </>
   )

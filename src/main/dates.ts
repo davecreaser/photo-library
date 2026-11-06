@@ -91,8 +91,16 @@ export function detectClockErrors(photos: DatedPhoto[]): Suggestion[] {
       if (offset === 0 || dirs.length < 2) continue
       const evidence = new Set(dirs)
       const sorted = list.map((p) => p.raw).sort()
-      const inEvidence = (p: DatedPhoto) => p.dirs.some((d) => { const h = folderDate(d); return !!h && evidence.has(h.source) })
-      const lastEvidence = list.filter(inEvidence).map((p) => p.raw).sort().at(-1)!
+      const inEvidence = (p: DatedPhoto) =>
+        p.dirs.some((d) => {
+          const h = folderDate(d)
+          return !!h && evidence.has(h.source)
+        })
+      const lastEvidence = list
+        .filter(inEvidence)
+        .map((p) => p.raw)
+        .sort()
+        .at(-1)!
 
       // Where was the clock fixed? Look for a gap after the evidence, about as long as the error.
       let appliesBefore: string | null = null

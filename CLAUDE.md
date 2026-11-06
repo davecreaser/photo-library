@@ -35,4 +35,16 @@ Tests that touch a photo folder snapshot it before and after (excluding `.DS_Sto
 
 ## Workflow
 
-New features go through `/feature` (`.claude/skills/feature/`): spec (`docs/specs/`, product agent) → design (designer agent) → build → review (reviewer agent) → QA (qa agent) → PR. The user approves the spec and design, and merges PRs. Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merges.
+New features go through `/feature` (`.claude/skills/feature/`): spec (`docs/specs/`, product agent) → design (designer agent) → build → review (reviewer agent) → QA (qa agent) → PR, with CI watched to green. The user approves the spec and design, and merges PRs. Product context: `docs/product/brief.md`; candidate features are GitHub issues labelled `idea`.
+
+Headless version (`.github/workflows/agent.yml`): on an `idea` issue the owner comments `approved` (spec + design posted, label `spec-ready`), then `go` (build, review, QA, PR; label `pr-ready`), or `revise: …`, or `approved, no spec` for small changes. Only the owner's comments trigger it.
+
+Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merges. One PR at a time against `main`; no stacked PRs. CI runs Linux + Windows on PRs and `feat/**` pushes; macOS on `main` and manual runs.
+
+## Working with the owner
+
+- **Privacy of the owner's library:** never view the owner's real photos or screenshots of the app showing them, and never send them to any cloud service, without asking first. Reading the real database read-only for measurements is fine; personal names and photos never go into the repo or tests.
+- **Usage is limited:** keep sessions focused (a fresh session per feature or task), prefer the headless workflow for builds, and don't spawn agents or extra review rounds without need. Long conversations cost more per message.
+- **Where state lives:** the product brief (`docs/product/`), specs and their Decisions (`docs/specs/`), ADRs, `CONTEXT.md`, and GitHub issues labelled `idea` (the roadmap). Model evaluation: `scripts/model-eval/` (results cache in `~/.cache/photo-library-eval`, outside the repo).
+- **Background agents:** check where an agent actually runs (local worktree vs cloud) before telling the owner it's safe to close the laptop.
+- **Gotchas:** `gh pr edit` can fail with a "Projects (classic)" GraphQL error; use `gh api -X PATCH repos/davecreaser/photo-library/pulls/N`. `node:sqlite` binds JS numbers as REAL, so integer keys (e.g. sqlite-vec rowids) need BigInt. Prettier reflows long lines, so re-read a file before scripted edits.

@@ -1,0 +1,113 @@
+name: Agent
+
+# The headless /feature workflow, driven by the owner's comments on `idea` issues:
+#   "approved"           -> write the spec (and design), post a summary, label spec-ready
+#   "approved, no spec"  -> small change: skip the spec gate and build straight away
+#   "revise: <changes>"  -> on a spec-ready issue: update the spec/design and post again
+#   "go"                 -> on a spec-ready issue: build, review, QA, open a PR, watch CI
+# Only the repository owner's comments do anything. The agent never merges or pushes to main.
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  route:
+    if: >-
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == github.repository_owner &&
+      contains(github.event.issue.labels.*.name, 'idea')
+    runs-on: ubuntu-latest
+    outputs:
+      stage: ${{ steps.pick.outputs.stage }}
+    steps:
+      - id: pick
+        env:
+          BODY: ${{ github.event.comment.body }}
+          SPEC_READY: ${{ contains(github.event.issue.labels.*.name, 'spec-ready') }}
+          BUSY: ${{ contains(github.event.issue.labels.*.name, 'building') }}
+        run: |
+          first=$(printf '%s' "$BODY" | head -n1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+          stage=none
+          if [ "$BUSY" = "true" ]; then stage=none
+          elif printf '%s' "$first" | grep -qE '^approved,? no spec'; then stage=build-direct
+          elif [ "$SPEC_READY" != "true" ] && printf '%s' "$first" | grep -qE '^approved\b'; then stage=spec
+          elif [ "$SPEC_READY" = "true" ] && printf '%s' "$first" | grep -qE '^go\b'; then stage=build
+          elif [ "$SPEC_READY" = "true" ] && printf '%s' "$first" | grep -qE '^revise:'; then stage=revise
+          fi
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "Stage: $stage"
+
+  agent:
+    needs: route
+    if: needs.route.outputs.stage != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    concurrency:
+      group: agent-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write # the Claude GitHub app token exchange
+      actions: read # to watch CI runs
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+      STAGE: ${{ needs.route.outputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mark the issue
+        run: |
+          gh issue edit "$ISSUE" --add-label building --repo "$GITHUB_REPOSITORY" || gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels" -f "labels[]=building"
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "🤖 On it (stage: \`$STAGE\`). [Run log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: resources/models
+          key: face-models-${{ hashFiles('scripts/fetch-models.mjs') }}
+
+      - run: npm ci
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: --max-turns 400
+          prompt: |
+            You are running this repository's /feature workflow headlessly, for GitHub issue #${{ github.event.issue.number }} ("${{ github.event.issue.title }}"), stage `${{ needs.route.outputs.stage }}`. Nobody can answer questions during this run: the owner reviews asynchronously on the issue.
+
+            Read first: CLAUDE.md, CONTEXT.md, docs/product/brief.md, docs/adr/, .claude/skills/feature/SKILL.md, and the agent definitions in .claude/agents/. Read the issue and all its comments with `gh issue view ${{ github.event.issue.number }} --comments`.
+
+            The owner's latest comment (the trigger):
+            ---
+            ${{ github.event.comment.body }}
+            ---
+
+            Do exactly the part for your stage:
+
+            **spec**: SKILL steps 1–3 without the live gates. Create branch `feat/NNNN-slug` from main (next spec number in docs/specs/). Write the spec following .claude/agents/product.md, then, if the feature has UI, the Design section following .claude/agents/designer.md. Commit and push the branch (no PR yet). Then post ONE comment on the issue with: a link to the spec file on the branch, a 5-line summary, the acceptance criteria (one line each), the key screens and copy (if UI), and numbered open questions each with your recommended answer. End the comment with: "Reply `go` to build with the recommended answers, `go` plus your answers to change any, or `revise: …` to change the spec." Add the label `spec-ready`. Stop: do not build.
+
+            **revise**: check out the issue's existing `feat/...` branch, apply the owner's requested changes to the spec and design, commit, push, and post a short comment listing what changed and any new open questions. Keep `spec-ready`.
+
+            **build**: check out the issue's `feat/...` branch. Record the owner's answers (from their `go` comment, otherwise your recommended answers) in the spec's Decisions section and set `Status: approved`. Then SKILL steps 4–7: build test-first in small commits; ONE review pass following .claude/agents/reviewer.md and ONE QA pass following .claude/agents/qa.md (subagents if you can); fix the findings, and only re-review if the first pass found something blocking. Usage is limited, so stay focused; open a PR into main with `Closes #${{ github.event.issue.number }}`; watch CI to green (`gh run watch`), fixing real causes. Post a comment on the issue with the PR link and a summary, remove `spec-ready`, add `pr-ready`.
+
+            **build-direct**: the owner skipped the spec gate for a small change. Create the branch, write a short spec (product.md) with recommended answers as Decisions, then do everything in **build**.
+
+            Hard rules: never push to main, never force-push, never merge a PR. Photo safety rules in CLAUDE.md are absolute. Use generated photos only in tests. If something blocks you that only the owner can decide, post a comment on the issue explaining it and stop. End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>" and PR bodies with "🤖 Generated with [Claude Code](https://claude.com/claude-code)".
+
+      - name: Clear the building label
+        if: always()
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels/building" >/dev/null 2>&1 || true
+          if [ "${{ job.status }}" != "success" ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "🤖 The run stopped with status \`${{ job.status }}\`. [Run log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+          fi

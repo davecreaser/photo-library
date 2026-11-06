@@ -35,8 +35,18 @@ npm run typecheck
 
 ## Roadmap
 
+Specs live in `docs/specs/`; features go through `/feature`.
+
 1. ~~Events, clock fixes, duplicates, favourites~~ (done)
 2. ~~Faces~~ (done)
-3. **Semantic search:** local CLIP embeddings so "beach", "snow" or "birthday cake" work without tags.
-4. **Places:** reverse-geocode GPS offline to country/city.
-5. Optional (opt-in) Claude API captions, if the local models aren't good enough.
+3. ~~Suggested albums~~ (spec 0001, done)
+4. **Search by content** (spec 0002, in progress): a local CLIP-style model and a vector index, so "beach", "snow" or "birthday cake" work without tags.
+5. **Best photos** (spec 0003): near-duplicate detection (from the content embeddings), quality scores (sharpness, exposure, eyes open) and "pick a diverse set of N" (covering days and people). Useful on its own as a "Best of" view for any album or suggestion.
+6. **Local app API**: a localhost-only API (search, people, events, albums, best photos, export copies, render slideshow) that tools and agents can call. The app itself stays local-only.
+7. **Recipes with n8n**: n8n chains the app's building blocks for a job, with a human approval step and optional delivery to outside services (which the app never does itself).
+   - First recipe: **trip slideshow** ("make me a slideshow of our holiday to Poland"): pick the best ~40, approve or swap them in a form, render a video to `~/Movies`.
+   - Then: **photobook selection** ("best of 2026 as a present"): an album of the best ~60 plus a folder of copies ready for the print shop.
+   - Popular recipes become built-in buttons later ("Make slideshow" on an album).
+8. **Ask your library**: an n8n AI agent using the local API as tools ("when did we last go to Poland?", "Jake at the beach last summer"), with a local model (Ollama) or opt-in Claude for text only. This is the prototype for in-app natural-language search (RAG over the library).
+9. **Places:** reverse-geocode GPS offline to country/city.
+10. Optional (opt-in) Claude API captions, if the local models aren't good enough.

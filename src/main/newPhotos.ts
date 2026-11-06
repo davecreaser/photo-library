@@ -1,4 +1,4 @@
-// New photos for an album (spec 0003). Pure: no database.
+// New photos for an album (spec 0005). Pure: no database.
 // An album made from suggestions is offered later photos that either fall within its dates
 // (the end extended by the burst gap) or belong to a detected group that was mostly in it.
 import { dateLabel, type DetectedEvent } from './events.ts'

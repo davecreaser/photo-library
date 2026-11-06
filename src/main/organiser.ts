@@ -38,12 +38,12 @@ export class Organiser {
     return this.groupsCache
   }
 
-  /** The groups as suggestions see them: photos offered to an album (spec 0003) are not suggested again. */
+  /** The groups as suggestions see them: photos offered to an album (spec 0005) are not suggested again. */
   private groups(): DetectedEvent[] {
     return withoutOffered(this.rawGroups(), this.offers(), this.inputs())
   }
 
-  /** New photos waiting for each album made from suggestions (spec 0003), newest first. */
+  /** New photos waiting for each album made from suggestions (spec 0005), newest first. */
   private offers(): Offer[] {
     const sources = this.db.offerSources()
     if (sources.length === 0) return []

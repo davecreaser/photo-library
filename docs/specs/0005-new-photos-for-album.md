@@ -1,4 +1,4 @@
-# 0003: New photos for an album
+# 0005: New photos for an album
 
 Status: approved
 Issue: #19

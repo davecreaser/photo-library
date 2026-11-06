@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS suggestion_decision_photos (
 );
 CREATE INDEX IF NOT EXISTS suggestion_decision_photos_photo ON suggestion_decision_photos (photo_id);
 
--- "Not these" on new photos offered for an album (spec 0003), kept by photo.
+-- "Not these" on new photos offered for an album (spec 0005), kept by photo.
 CREATE TABLE IF NOT EXISTS offer_declines (
   album_id INTEGER NOT NULL REFERENCES albums (id) ON DELETE CASCADE,
   photo_id INTEGER NOT NULL REFERENCES photos (id) ON DELETE CASCADE,
@@ -270,7 +270,7 @@ export class LibraryDb {
         this.db.exec('ALTER TABLE photos ADD COLUMN faces_version INTEGER')
       }
       this.db.exec(SCHEMA)
-      // v5 -> v6: offer_declines (spec 0003) is created by SCHEMA above.
+      // v5 -> v6: offer_declines (spec 0005) is created by SCHEMA above.
       // v4 -> v5: content analysis (spec 0002). Every present photo gets analysed.
       if (!this.db.prepare("SELECT 1 FROM pragma_table_info('photos') WHERE name = 'content_version'").get()) {
         this.db.exec('ALTER TABLE photos ADD COLUMN content_version INTEGER')
@@ -1002,7 +1002,7 @@ export class LibraryDb {
     }))
   }
 
-  // --- new photos for an album (spec 0003) ---
+  // --- new photos for an album (spec 0005) ---
 
   /** Albums made from suggestions: their name and every photo of their accepted decisions (missing ones too) with capture times. */
   offerSources(): { albumId: number; name: string; photoIds: number[]; times: string[] }[] {
@@ -1157,9 +1157,26 @@ export class LibraryDb {
     this.db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, id)
   }
 
-  /** Deletes the album record and its sub-albums. Photos themselves are untouched. */
+  /** Moves an album under `parentId` (null = top level). Refuses itself, its descendants and unknown targets. */
+  moveAlbum(id: number, parentId: number | null): boolean {
+    if (parentId != null) {
+      if (!this.db.prepare('SELECT 1 FROM albums WHERE id = ?').get(parentId)) return false
+      // Walk up from the target: meeting `id` means the target is inside the album.
+      for (let at: number | null = parentId; at != null;) {
+        if (at === id) return false
+        at = ((this.db.prepare('SELECT parent_id FROM albums WHERE id = ?').get(at) as Row | undefined)?.parent_id as number | null) ?? null
+      }
+    }
+    this.db.prepare('UPDATE albums SET parent_id = ? WHERE id = ?').run(parentId, id)
+    return true
+  }
+
+  /** Deletes the album record; its sub-albums move up one level. Photos themselves are untouched. */
   deleteAlbum(id: number): void {
-    this.db.prepare('DELETE FROM albums WHERE id = ?').run(id)
+    this.transaction(() => {
+      this.db.prepare('UPDATE albums SET parent_id = (SELECT parent_id FROM albums WHERE id = ?) WHERE parent_id = ?').run(id, id)
+      this.db.prepare('DELETE FROM albums WHERE id = ?').run(id)
+    })
   }
 
   addToAlbum(albumId: number, photoIds: number[]): void {

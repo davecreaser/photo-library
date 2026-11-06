@@ -981,7 +981,7 @@ button.primary-small {
   margin: 0 0 6px;
 }
 
-/* New photos for an album (spec 0003) */
+/* New photos for an album (spec 0005) */
 .offers {
   margin-bottom: 24px;
 }
@@ -1017,4 +1017,10 @@ button.primary-small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nav-item.drop-target,
+.sidebar h2.drop-target {
+  outline: 2px solid var(--accent, #4a8cff);
+  outline-offset: -2px;
 }

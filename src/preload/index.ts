@@ -50,6 +50,7 @@ const api: Api = {
   listAlbums: () => ipcRenderer.invoke('albums:list'),
   createAlbum: (name, parentId) => ipcRenderer.invoke('albums:create', name, parentId),
   renameAlbum: (id, name) => ipcRenderer.invoke('albums:rename', id, name),
+  moveAlbum: (id, parentId) => ipcRenderer.invoke('albums:move', id, parentId),
   deleteAlbum: (id) => ipcRenderer.invoke('albums:delete', id),
   addToAlbum: (albumId, ids) => ipcRenderer.invoke('albums:add', albumId, ids),
   removeFromAlbum: (albumId, ids) => ipcRenderer.invoke('albums:remove', albumId, ids),

@@ -15,7 +15,7 @@ export type SuggestionNotice =
 interface Props {
   /** null until the first load finishes. */
   suggestions: SuggestedAlbum[] | null
-  /** New photos waiting for albums (spec 0003). */
+  /** New photos waiting for albums (spec 0005). */
   offers: AlbumOffer[]
   onOpenOffer: (albumId: number) => void
   onAddOffer: (albumId: number) => void

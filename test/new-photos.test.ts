@@ -1,4 +1,4 @@
-// Spec 0003: new photos for an album. Each test names the acceptance criteria it proves.
+// Spec 0005: new photos for an album. Each test names the acceptance criteria it proves.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'

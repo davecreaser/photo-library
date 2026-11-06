@@ -7,6 +7,7 @@
 import sharp from 'sharp'
 import * as ort from 'onnxruntime-node'
 import { join } from 'node:path'
+import { decodeForAnalysis, type RgbImage } from './decode.ts'
 
 /** Bump when detection/recognition changes, so photos get re-analysed. */
 export const FACE_MODEL_VERSION = 1
@@ -14,7 +15,7 @@ export const FACE_MODEL_VERSION = 1
 const DET_SIZE = 640 // YuNet's fixed input
 const DET_LONG_SIDE = 1280 // detection runs on the whole photo plus tiles at this size
 const TILE_OVERLAP = 192
-const ANALYSIS_LONG_SIDE = 2048 // faces are aligned from this resolution
+// Faces are aligned from the photo at FACE_ANALYSIS_LONG_SIDE (2048px, decode.ts).
 const SCORE_THRESHOLD = 0.8
 const NMS_IOU = 0.3
 /** Faces smaller than this (in the 2048px image) are detected but not recognised: too blurry to be reliable. */
@@ -63,14 +64,12 @@ export class FaceAnalyser {
 
   /** Finds and embeds faces. `image` is anything sharp can read (a path or an encoded buffer). */
   async analyse(image: string | Buffer): Promise<DetectedFace[]> {
-    const { data, info } = await sharp(image, { failOn: 'none' })
-      .rotate()
-      .resize(ANALYSIS_LONG_SIDE, ANALYSIS_LONG_SIDE, { fit: 'inside', withoutEnlargement: true })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true })
-    const W = info.width
-    const H = info.height
+    return this.analyseDecoded(await decodeForAnalysis(image, true))
+  }
+
+  /** Finds and embeds faces in a photo decoded by decodeForAnalysis(…, true). */
+  async analyseDecoded(image: RgbImage): Promise<DetectedFace[]> {
+    const { data, width: W, height: H } = image
 
     // Detection image: long side 1280 (or smaller if the photo is small).
     const detScale = Math.min(1, DET_LONG_SIDE / Math.max(W, H))

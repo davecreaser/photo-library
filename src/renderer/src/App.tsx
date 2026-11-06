@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Album,
   ClockSuggestion,
@@ -51,7 +51,11 @@ export function App() {
   const [albums, setAlbums] = useState<Album[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [timeline, setTimeline] = useState<TimelineMonth[]>([])
-  const [suggested, setSuggested] = useState<SuggestedAlbum[]>([])
+  const [suggestedList, setSuggestedList] = useState<SuggestedAlbum[] | null>(null)
+  const [suggestionsFailed, setSuggestionsFailed] = useState(false)
+  const suggested = suggestedList ?? []
+  // Guards against double submits (accept/dismiss) while a request is in flight.
+  const deciding = useRef(false)
   const [minBurstSize, setMinBurstSizeState] = useState(20)
   const [dismissedCount, setDismissedCount] = useState(0)
   const [notice, setNotice] = useState<SuggestionNotice>(null)
@@ -72,21 +76,25 @@ export function App() {
   const [version, setVersion] = useState(0)
 
   const refreshSidebar = useCallback(async () => {
-    const [lib, a, t, tl, sg, s, pe, min, dismissed] = await Promise.all([
+    // Suggestions load on their own, so a failure there doesn't break the rest of the sidebar.
+    void Promise.all([api.getSuggestions(), api.getMinBurstSize(), api.getDismissedCount()]).then(
+      ([sg, min, dismissed]) => {
+        setSuggestedList(sg)
+        setMinBurstSizeState(min)
+        setDismissedCount(dismissed)
+        setSuggestionsFailed(false)
+      },
+      () => setSuggestionsFailed(true)
+    )
+    const [lib, a, t, tl, s, pe] = await Promise.all([
       api.getLibrary(),
       api.listAlbums(),
       api.listTags(),
       api.getTimeline(),
-      api.getSuggestions(),
       api.getClockSuggestions(),
-      api.getPeople(),
-      api.getMinBurstSize(),
-      api.getDismissedSuggestions()
+      api.getPeople()
     ])
     setPeople(pe)
-    setSuggested(sg)
-    setMinBurstSizeState(min)
-    setDismissedCount(dismissed.length)
     setLibrary(lib)
     setAlbums(a)
     setTags(t)
@@ -172,18 +180,33 @@ export function App() {
 
   const currentSuggestion = view.kind === 'suggestion' ? suggested.find((e) => e.id === view.id) : undefined
 
-  const acceptSuggestions = async (ids: string[], name: string) => {
-    const album = await api.acceptSuggestions(ids, name)
-    setNotice({ kind: 'made', album, sources: ids.length })
-    refreshAll()
-    return album
+  /** Runs one decision at a time; a failure (e.g. a rescan changed the suggestion) is shown, then the list refreshes. */
+  const decide = async <T,>(run: () => Promise<T>): Promise<T> => {
+    if (deciding.current) throw new Error('busy')
+    deciding.current = true
+    try {
+      return await run()
+    } catch (e) {
+      const message = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
+      setNotice({ kind: 'error', message })
+      throw e
+    } finally {
+      deciding.current = false
+      refreshAll()
+    }
   }
-  const dismissSuggestions = async (ids: string[]) => {
-    const label = ids.length === 1 ? `Dismissed “${suggested.find((s) => s.id === ids[0])?.name ?? 'suggestion'}”.` : `Dismissed ${ids.length} suggestions.`
-    const decisionIds = await api.dismissSuggestions(ids)
-    setNotice({ kind: 'dismissed', label, decisionIds })
-    refreshAll()
-  }
+  const acceptSuggestions = (ids: string[], name: string) =>
+    decide(async () => {
+      const album = await api.acceptSuggestions(ids, name)
+      setNotice({ kind: 'made', album, sources: ids.length })
+      return album
+    })
+  const dismissSuggestions = (ids: string[]) =>
+    decide(async () => {
+      const label = ids.length === 1 ? `Dismissed “${suggested.find((s) => s.id === ids[0])?.name ?? 'suggestion'}”.` : `Dismissed ${ids.length} suggestions.`
+      const decisionIds = await api.dismissSuggestions(ids)
+      setNotice({ kind: 'dismissed', label, decisionIds })
+    })
   const undoDismiss = async () => {
     if (notice?.kind !== 'dismissed') return
     await api.restoreSuggestions(notice.decisionIds)
@@ -356,8 +379,12 @@ export function App() {
                   <InlineInput
                     initial={currentSuggestion.name}
                     onSubmit={async (name) => {
-                      const album = await acceptSuggestions([currentSuggestion.id], name)
-                      navigate({ kind: 'album', id: album.id })
+                      try {
+                        const album = await acceptSuggestions([currentSuggestion.id], name)
+                        navigate({ kind: 'album', id: album.id })
+                      } catch {
+                        setNamingSuggestion(false) // the error is shown; the suggestion may be gone
+                      }
                     }}
                     onEmpty={() => setEmptySuggestionName(true)}
                     onCancel={() => setNamingSuggestion(false)}
@@ -379,7 +406,7 @@ export function App() {
                   <button
                     title="Stop suggesting this. Photos aren't moved or changed."
                     onClick={async () => {
-                      await dismissSuggestions([currentSuggestion.id])
+                      await dismissSuggestions([currentSuggestion.id]).catch(() => {})
                       navigate({ kind: 'suggestions' }, true)
                     }}
                   >
@@ -416,7 +443,9 @@ export function App() {
           <PersonFaces person={currentPerson} onChanged={refreshAll} />
         ) : view.kind === 'suggestions' ? (
           <SuggestionsView
-            suggestions={suggested}
+            suggestions={suggestedList}
+            loadError={suggestionsFailed}
+            onRetry={refreshAll}
             minBurstSize={minBurstSize}
             dismissedCount={dismissedCount}
             scanned={library.photoCount > 0 || scan?.phase === 'done'}
@@ -426,7 +455,7 @@ export function App() {
             onAccept={async (ids, name) => {
               await acceptSuggestions(ids, name)
             }}
-            onDismiss={(ids) => void dismissSuggestions(ids)}
+            onDismiss={(ids) => void dismissSuggestions(ids).catch(() => {})}
             onUndo={() => void undoDismiss()}
             onOpenAlbum={(id) => navigate({ kind: 'album', id })}
             onSetMinBurstSize={async (n) => {
@@ -466,7 +495,16 @@ export function App() {
 
       {showCorrections && <CorrectionsDialog onClose={() => setShowCorrections(false)} onChanged={refreshAll} />}
       {showIgnored && <IgnoredFoldersDialog onClose={() => setShowIgnored(false)} onChanged={refreshAll} />}
-      {showDismissed && <DismissedDialog minBurstSize={minBurstSize} onClose={() => setShowDismissed(false)} onChanged={refreshAll} />}
+      {showDismissed && (
+        <DismissedDialog
+          minBurstSize={minBurstSize}
+          onClose={() => setShowDismissed(false)}
+          onChanged={() => {
+            setNotice(null) // a restore ends the one-step undo
+            refreshAll()
+          }}
+        />
+      )}
     </div>
   )
 }

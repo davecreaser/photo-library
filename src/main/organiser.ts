@@ -25,31 +25,29 @@ export class Organiser {
   }
 
   private groups(): DetectedEvent[] {
-    if (!this.groupsCache) {
-      const detected = detectEvents(this.db.photosForOrganising(this.basePath()))
-      this.convertOldMerges(detected)
-      this.groupsCache = detected
-    }
+    this.groupsCache ??= detectEvents(this.db.photosForOrganising(this.basePath()))
     return this.groupsCache
   }
 
   /**
    * Before suggested albums, users could merge and rename events. Each merge not
-   * already (mostly) saved as an album becomes one, once (spec 0001, AC-9).
+   * already (mostly) saved as an album becomes one (spec 0001, AC-9). Run at startup.
+   * A merge whose photos aren't present (e.g. an unplugged drive) is kept for a later run.
    */
-  private convertOldMerges(detected: DetectedEvent[]): void {
+  convertOldMerges(): void {
     const merges = this.db.eventGroups()
     if (merges.length === 0) return
     this.db.transaction(() => {
       const albums = this.db.albumPhotoSets()
-      for (const merged of applyGroups(detected, merges).filter((e) => e.groupId !== undefined)) {
+      for (const merged of applyGroups(this.groups(), merges)) {
+        if (merged.groupId === undefined) continue
         if (selectSuggestions([merged], 1, [], albums).length > 0) {
           const album = this.db.createAlbum(merged.name, null)
           this.db.addToAlbum(album.id, merged.photoIds)
           albums.push({ id: album.id, photoIds: merged.photoIds })
         }
+        this.db.deleteEventGroup(merged.groupId)
       }
-      merges.forEach((m) => this.db.deleteEventGroup(m.id))
     })
   }
 
@@ -78,12 +76,18 @@ export class Organiser {
     return this.groups().find((g) => g.id === id)?.photoIds ?? []
   }
 
-  /** Makes one album from one or more suggestions (accept, or combine). Atomic. */
+  /** The waiting suggestions with these ids; refuses if any has been decided or changed meanwhile. */
+  private waiting(ids: string[]): DetectedEvent[] {
+    const chosen = this.visible().filter((g) => ids.includes(g.id))
+    if (ids.length === 0 || chosen.length !== new Set(ids).size) throw new Error('Those suggestions are no longer here.')
+    return chosen
+  }
+
+  /** Makes one album from one or more waiting suggestions (accept, or combine). Atomic. */
   acceptSuggestions(ids: string[], name: string): Album {
     const clean = name.trim()
     if (!clean) throw new Error('An album needs a name.')
-    const chosen = this.groups().filter((g) => ids.includes(g.id))
-    if (chosen.length === 0) throw new Error('Those suggestions are no longer here.')
+    const chosen = this.waiting(ids)
     return this.db.transaction(() => {
       const album = this.db.createAlbum(clean, null)
       const photoIds = [...new Set(chosen.flatMap((g) => g.photoIds))]
@@ -95,7 +99,7 @@ export class Organiser {
 
   /** Dismisses suggestions; returns the decision ids, for undo. */
   dismissSuggestions(ids: string[]): number[] {
-    const chosen = this.groups().filter((g) => ids.includes(g.id))
+    const chosen = this.waiting(ids)
     return this.db.transaction(() => chosen.map((g) => this.db.recordDecision('dismissed', g.name, g.photoIds, null)))
   }
 
@@ -104,17 +108,30 @@ export class Organiser {
     this.db.transaction(() => decisionIds.forEach((id) => this.db.deleteDecision(id)))
   }
 
+  dismissedCount(): number {
+    return this.db.dismissedCount()
+  }
+
   /** Dismissed suggestions, newest first, noting ones that wouldn't be suggested even if restored. */
   listDismissed(): DismissedSuggestion[] {
     const min = this.getMinBurstSize()
+    const groups = this.groups()
+    const groupOfPhoto = new Map<number, number>()
+    groups.forEach((g, i) => g.photoIds.forEach((p) => groupOfPhoto.set(p, i)))
     const albums = this.db.albumPhotoSets()
-    const sets = new Map(this.db.decisionPhotoSets().map((d) => [d.id, d.photoIds]))
+    const photosOf = new Map(this.db.decisionPhotoSets().map((d) => [d.id, d.photoIds]))
     return this.db.listDismissed().map((d) => {
-      const photos = new Set(sets.get(d.id) ?? [])
-      const group = this.groups().find((g) => g.photoIds.filter((p) => photos.has(p)).length * 2 >= g.photoIds.length && g.photoIds.length > 0)
+      // The current group this dismissal is about: the one holding most of its photos, if at least half of that group.
+      const counts = new Map<number, number>()
+      for (const p of photosOf.get(d.id) ?? []) {
+        const g = groupOfPhoto.get(p)
+        if (g !== undefined) counts.set(g, (counts.get(g) ?? 0) + 1)
+      }
+      const [best] = [...counts].sort((a, b) => b[1] - a[1])
+      const group = best && best[1] * 2 >= groups[best[0]].photoIds.length ? groups[best[0]] : undefined
       let note: DismissedSuggestion['note'] = null
-      if (!group || !isCandidate(group, min)) note = 'below-minimum'
-      else if (selectSuggestions([group], min, [], albums).length === 0) note = 'in-album'
+      if (group && !isCandidate(group, min)) note = 'below-minimum'
+      else if (group && selectSuggestions([group], min, [], albums).length === 0) note = 'in-album'
       return { ...d, note }
     })
   }

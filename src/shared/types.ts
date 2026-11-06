@@ -202,6 +202,7 @@ export interface Api {
   /** Undo a dismissal, or restore one from the dismissed list. */
   restoreSuggestions(dismissalIds: number[]): Promise<void>
   getDismissedSuggestions(): Promise<DismissedSuggestion[]>
+  getDismissedCount(): Promise<number>
   getMinBurstSize(): Promise<number>
   /** False if the value isn't a whole number from 1 to 1,000 (nothing changes). */
   setMinBurstSize(n: number): Promise<boolean>

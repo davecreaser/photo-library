@@ -213,6 +213,7 @@ function registerIpc(): void {
   ipcMain.handle('suggestions:dismiss', (_e, ids: string[]) => organiser.dismissSuggestions(ids))
   ipcMain.handle('suggestions:restore', (_e, ids: number[]) => organiser.restoreDismissed(ids))
   ipcMain.handle('suggestions:dismissed', () => organiser.listDismissed())
+  ipcMain.handle('suggestions:dismissedCount', () => organiser.dismissedCount())
   ipcMain.handle('suggestions:getMin', () => organiser.getMinBurstSize())
   ipcMain.handle('suggestions:setMin', (_e, n: number) => organiser.setMinBurstSize(n))
 
@@ -253,6 +254,12 @@ app.whenReady().then(() => {
   db = new LibraryDb(dbFile)
   images = new ImageCache(join(dataDir, 'cache'))
   organiser = new Organiser(db)
+  // Old merged events become albums before the window asks for anything (spec 0001, AC-9).
+  try {
+    organiser.convertOldMerges()
+  } catch (e) {
+    console.error('Converting old merged events failed; will retry next launch', e)
+  }
   people = new People(db, join(__dirname, '..', '..', 'resources', 'models'), images, join(dataDir, 'cache', 'faces'), (p) =>
     window?.webContents.send('people:progress', p)
   )

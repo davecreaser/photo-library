@@ -25,6 +25,7 @@ const api: Api = {
   dismissSuggestions: (ids) => ipcRenderer.invoke('suggestions:dismiss', ids),
   restoreSuggestions: (ids) => ipcRenderer.invoke('suggestions:restore', ids),
   getDismissedSuggestions: () => ipcRenderer.invoke('suggestions:dismissed'),
+  getDismissedCount: () => ipcRenderer.invoke('suggestions:dismissedCount'),
   getMinBurstSize: () => ipcRenderer.invoke('suggestions:getMin'),
   setMinBurstSize: (n) => ipcRenderer.invoke('suggestions:setMin', n),
 

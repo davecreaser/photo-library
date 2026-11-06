@@ -207,7 +207,7 @@ test('AC-9: old merged events become albums, unless an album already covers them
   db.addEventGroup({ name: 'Sail Amsterdam', start: null, end: null, members: ['f:Sail Amsterdam'] })
 
   organiser.invalidate()
-  organiser.listSuggestions()
+  organiser.convertOldMerges()
   const albums = db.listAlbums().map((a) => [a.name, a.photoCount])
   assert.deepEqual(albums, [
     ['Norway', 40],
@@ -263,4 +263,90 @@ test('AC-13: ignoring a folder forgets its suggestion decisions and their names'
   organiser.invalidate()
   assert.equal(organiser.listDismissed().length, 0)
   close()
+})
+
+test('review: combining with a suggestion that changed meanwhile is refused, and makes no album', () => {
+  const { db, organiser, add, close } = setup()
+  add('unsorted', 20, '2026-01-31T10:00:00')
+  add('unsorted', 20, '2026-02-02T10:00:00')
+  const ids = organiser.listSuggestions().map((s) => s.id)
+  // A rescan adds an earlier photo to the first burst: its id changes.
+  add('unsorted', 1, '2026-01-31T09:00:00')
+  assert.throws(() => organiser.acceptSuggestions(ids, 'Norway'), /no longer here/)
+  assert.equal(db.listAlbums().length, 0)
+  close()
+})
+
+test('review: old merges whose photos are missing are kept for later, not lost', () => {
+  const { db, organiser, add, close } = setup()
+  const trip = add('unsorted', 20, '2026-01-31T10:00:00')
+  db.addEventGroup({ name: 'Norway', start: null, end: null, members: [`t:${trip[0]}`] })
+  db.markMissing(99) // the drive is unplugged: nothing seen in this scan
+  db.refreshDerived()
+  organiser.invalidate()
+  organiser.convertOldMerges()
+  assert.equal(db.eventGroups().length, 1, 'kept')
+  assert.equal(db.listAlbums().length, 0)
+  close()
+})
+
+test('review: a failed commit leaves the database usable', () => {
+  const { db, close } = setup()
+  // A deferred foreign-key violation makes COMMIT itself fail.
+  assert.throws(() =>
+    db.transaction(() => {
+      ;(db as unknown as { db: { exec(sql: string): void } }).db.exec(
+        'PRAGMA defer_foreign_keys = ON; INSERT INTO album_photos (album_id, photo_id) VALUES (999, 999)'
+      )
+    })
+  )
+  const album = db.createAlbum('Still works', null)
+  assert.equal(db.listAlbums()[0].id, album.id)
+  close()
+})
+
+test('review: upgrading a v3 library keeps albums, tags, merges and settings', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pl-v3-'))
+  const file = join(dir, 'library.db')
+  const db = new LibraryDb(file)
+  db.setSetting('basePath', BASE)
+  db.recordFile(
+    {
+      path: `${BASE}/a.jpg`,
+      size: 1,
+      mtimeMs: 1,
+      takenAt: '2025-01-01T10:00:00',
+      width: null,
+      height: null,
+      orientation: null,
+      camera: null,
+      lat: null,
+      lon: null
+    },
+    'h',
+    1
+  )
+  const album = db.createAlbum('Kept', null)
+  db.addToAlbum(album.id, [db.queryPhotos({}).photos[0].id])
+  db.addTag([db.queryPhotos({}).photos[0].id], 'Jake')
+  db.addEventGroup({ name: 'Norway', start: null, end: null, members: ['t:1'] })
+  // Turn it back into a v3 database.
+  const raw = (db as unknown as { db: { exec(sql: string): void } }).db
+  raw.exec('DROP TABLE suggestion_decision_photos; DROP TABLE suggestion_decisions; PRAGMA user_version = 3')
+  db.close()
+
+  const upgraded = new LibraryDb(file)
+  assert.equal(upgraded.getSetting('basePath'), BASE)
+  assert.deepEqual(
+    upgraded.listAlbums().map((a) => a.name),
+    ['Kept']
+  )
+  assert.deepEqual(
+    upgraded.listTags().map((t) => t.name),
+    ['Jake']
+  )
+  assert.equal(upgraded.eventGroups().length, 1)
+  assert.equal(upgraded.dismissedCount(), 0, 'new tables exist')
+  upgraded.close()
+  rmSync(dir, { recursive: true, force: true })
 })

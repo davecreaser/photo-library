@@ -56,3 +56,33 @@ export function fingerprint(root: string): string {
   walk(root)
   return h.digest('hex')
 }
+
+/**
+ * A second library for suggested-album edge cases: a named folder with a very long
+ * name, an undated named folder, and enough loose photos that the first scan takes a moment.
+ */
+export const LONG_FOLDER = 'a_very_long_folder_name_' + 'that_keeps_going_'.repeat(10) + 'end'
+
+export async function createEdgeLibrary(): Promise<Library> {
+  const root = mkdtempSync(join(tmpdir(), 'pl-e2e-edge-'))
+  for (let i = 0; i < 2; i++) await photo(join(root, 'trips', `05.25.${LONG_FOLDER}`, `L${i}.JPG`), `2025:05:0${i + 1} 10:00:00`)
+  for (let i = 0; i < 3; i++) await photo(join(root, 'old_scans', `scan${i}.jpg`), null)
+  // 120 loose photos, one every 2 days (so no burst of 20 at the default minimum).
+  for (let i = 0; i < 120; i++) {
+    const d = new Date(Date.UTC(2023, 0, 1) + i * 2 * 86_400_000)
+    const exif = `${d.getUTCFullYear()}:${String(d.getUTCMonth() + 1).padStart(2, '0')}:${String(d.getUTCDate()).padStart(2, '0')} 10:00:00`
+    await photo(join(root, 'unsorted', `IMG_${i}.JPG`), exif)
+  }
+  return { root, uniquePhotos: 2 + 3 + 120 }
+}
+
+/** `folders` named folders of one photo each, a day apart (AC-12: thousands of suggestions). */
+export async function createManyFoldersLibrary(folders: number): Promise<Library> {
+  const root = mkdtempSync(join(tmpdir(), 'pl-e2e-many-'))
+  for (let i = 0; i < folders; i++) {
+    const d = new Date(Date.UTC(2015, 0, 1) + i * 86_400_000)
+    const exif = `${d.getUTCFullYear()}:${String(d.getUTCMonth() + 1).padStart(2, '0')}:${String(d.getUTCDate()).padStart(2, '0')} 10:00:00`
+    await photo(join(root, 'trips', `trip_${String(i).padStart(4, '0')}`, 'IMG.JPG'), exif)
+  }
+  return { root, uniquePhotos: folders }
+}

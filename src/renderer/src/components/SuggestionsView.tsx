@@ -4,10 +4,15 @@ import { formatRange } from '../format.ts'
 import { InlineInput } from './InlineInput.tsx'
 
 /** The one-at-a-time message in the status slot after a decision (spec 0001 design). */
-export type SuggestionNotice = { kind: 'dismissed'; label: string; decisionIds: number[] } | { kind: 'made'; album: Album; sources: number } | null
+export type SuggestionNotice =
+  { kind: 'dismissed'; label: string; decisionIds: number[] } | { kind: 'made'; album: Album; sources: number } | { kind: 'error'; message: string } | null
 
 interface Props {
-  suggestions: SuggestedAlbum[]
+  /** null until the first load finishes. */
+  suggestions: SuggestedAlbum[] | null
+  /** Set when working out suggestions failed. */
+  loadError: boolean
+  onRetry: () => void
   minBurstSize: number
   dismissedCount: number
   /** False until the first scan has finished. */
@@ -24,6 +29,7 @@ interface Props {
 }
 
 const PAGE = 200
+const NONE: SuggestedAlbum[] = []
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
 
 export function suggestionMeta(s: SuggestedAlbum): string {
@@ -64,7 +70,8 @@ function MinimumField({ value, onSet }: { value: number; onSet: (n: number) => P
 }
 
 export function SuggestionsView(props: Props) {
-  const { suggestions, notice } = props
+  const { notice } = props
+  const suggestions = props.suggestions ?? NONE
   const [selected, setSelected] = useState<string[]>([])
   const [combining, setCombining] = useState(false)
   const [naming, setNaming] = useState<string | null>(null)
@@ -87,7 +94,7 @@ export function SuggestionsView(props: Props) {
   // ⌘Z undoes the last dismissal; Esc clears the selection.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return
+      if (e.target instanceof HTMLInputElement || document.querySelector('.modal')) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && notice?.kind === 'dismissed') {
         e.preventDefault()
         props.onUndo()
@@ -104,6 +111,27 @@ export function SuggestionsView(props: Props) {
   const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
   const chosen = suggestions.filter((s) => selected.includes(s.id))
   const chosenPhotos = chosen.reduce((n, s) => n + s.count, 0)
+
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 300)
+    return () => clearTimeout(t)
+  }, [])
+
+  if (props.loadError) {
+    return (
+      <div className="grid-scroller">
+        <div className="empty">
+          <p className="error">Suggestions couldn’t be worked out.</p>
+          <button onClick={props.onRetry}>Try again</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (props.suggestions === null) {
+    return <div className="grid-scroller">{slow && <p className="hint">Finding suggestions…</p>}</div>
+  }
 
   if (!props.scanned) {
     return (
@@ -136,7 +164,7 @@ export function SuggestionsView(props: Props) {
                 initial={chosen.find((s) => s.named)?.name ?? ''}
                 placeholder="Album name, e.g. Norway"
                 onSubmit={async (name) => {
-                  await props.onAccept(selected, name)
+                  await props.onAccept(selected, name).catch(() => {})
                   setSelected([])
                   setCombining(false)
                 }}
@@ -173,6 +201,13 @@ export function SuggestionsView(props: Props) {
           <button className="link" onClick={props.onUndo}>
             Undo
           </button>
+        </div>
+      )
+    }
+    if (notice?.kind === 'error') {
+      return (
+        <div className="merge-bar">
+          <span className="error">{notice.message}</span>
         </div>
       )
     }
@@ -259,7 +294,7 @@ export function SuggestionsView(props: Props) {
                       <InlineInput
                         initial={s.name}
                         onSubmit={async (name) => {
-                          await props.onAccept([s.id], name)
+                          await props.onAccept([s.id], name).catch(() => {})
                           setNaming(null)
                         }}
                         onEmpty={() => setEmptyName(true)}

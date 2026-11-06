@@ -269,19 +269,26 @@ export class LibraryDb {
 
   /** Runs `fn` atomically. Nested calls join the outer transaction (via savepoints). */
   transaction<T>(fn: () => T): T {
+    const outer = this.depth === 0
     const savepoint = `sp${this.depth}`
-    this.db.exec(this.depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`)
+    this.db.exec(outer ? 'BEGIN' : `SAVEPOINT ${savepoint}`)
     this.depth++
+    let result: T
     try {
-      const result = fn()
-      this.depth--
-      this.db.exec(this.depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`)
-      return result
+      result = fn()
+      this.db.exec(outer ? 'COMMIT' : `RELEASE ${savepoint}`)
     } catch (e) {
-      this.depth--
-      this.db.exec(this.depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
+      // Also reached if COMMIT/RELEASE itself fails (disk full, I/O error): undo and pass the error on.
+      try {
+        this.db.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
+      } catch {
+        // Nothing left to roll back (e.g. SQLite already ended the transaction).
+      }
       throw e
+    } finally {
+      this.depth--
     }
+    return result
   }
 
   // --- settings ---
@@ -382,6 +389,11 @@ export class LibraryDb {
       .run(keepId, dropId)
     this.db.prepare('INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) SELECT ?, tag_id FROM photo_tags WHERE photo_id = ?').run(keepId, dropId)
     this.db.prepare('UPDATE photos SET favorite = COALESCE(favorite, (SELECT favorite FROM photos WHERE id = ?)) WHERE id = ?').run(dropId, keepId)
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO suggestion_decision_photos (decision_id, photo_id) SELECT decision_id, ? FROM suggestion_decision_photos WHERE photo_id = ?'
+      )
+      .run(keepId, dropId)
     // Same content, so the same faces: keep whichever copy has them analysed (and named).
     if (!this.db.prepare('SELECT 1 FROM faces WHERE photo_id = ?').get(keepId)) {
       this.db.prepare('UPDATE faces SET photo_id = ? WHERE photo_id = ?').run(keepId, dropId)
@@ -415,9 +427,13 @@ export class LibraryDb {
     const faceIds = (this.db.prepare(`SELECT id FROM faces WHERE photo_id IN (SELECT id FROM photos WHERE ${condition})`).all() as Row[]).map(
       (r) => r.id as number
     )
+    // Any suggestion decision that involved a forgotten photo goes too, with its name, which may
+    // come from a private folder (ADR 0007). Albums are untouched: an accepted suggestion stays
+    // hidden because its photos are in the album.
+    this.db.exec(
+      `DELETE FROM suggestion_decisions WHERE id IN (SELECT decision_id FROM suggestion_decision_photos WHERE photo_id IN (SELECT id FROM photos WHERE ${condition}))`
+    )
     this.db.exec(`DELETE FROM photos WHERE ${condition}`)
-    // Decisions about suggestions made only of forgotten photos (and their names) go too.
-    this.db.exec('DELETE FROM suggestion_decisions WHERE NOT EXISTS (SELECT 1 FROM suggestion_decision_photos WHERE decision_id = suggestion_decisions.id)')
     return { hashes, faceIds }
   }
 
@@ -824,7 +840,11 @@ export class LibraryDb {
     return [...sets].map(([id, photoIds]) => ({ id, photoIds }))
   }
 
-  /** Dismissed suggestions with their present photos, newest decision first. */
+  dismissedCount(): number {
+    return (this.db.prepare("SELECT count(*) AS n FROM suggestion_decisions WHERE kind = 'dismissed'").get() as Row).n as number
+  }
+
+  /** Dismissed suggestions (counting present photos; all may be missing), newest first. */
   listDismissed(): { id: number; name: string; photoCount: number; start: string | null; end: string | null; coverId: number | null }[] {
     const rows = this.db
       .prepare(
@@ -833,7 +853,7 @@ export class LibraryDb {
          JOIN suggestion_decision_photos dp ON dp.decision_id = d.id
          LEFT JOIN photos p ON p.id = dp.photo_id AND p.present = 1
          WHERE d.kind = 'dismissed'
-         GROUP BY d.id HAVING photo_count > 0 ORDER BY d.id DESC`
+         GROUP BY d.id ORDER BY d.id DESC`
       )
       .all() as Row[]
     return rows.map((r) => ({

@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Feature branches too: commits pushed by the headless agent get checked even when the
+    # PR itself was opened with a token that doesn't trigger workflows.
+    branches: [main, 'feat/**']
   pull_request:
   workflow_dispatch: # run by hand (e.g. macOS on a PR): Actions → CI → Run workflow
 
@@ -17,8 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         # macOS minutes cost 10x on private repos, and the owner develops on a Mac (pre-commit
-        # hooks and QA run there), so pull requests run Linux + Windows; macOS runs on main and on demand.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest", "ubuntu-latest"]' || '["macos-latest", "windows-latest", "ubuntu-latest"]') }}
+        # hooks and QA run there), so only main and manual runs use macOS; everything else runs Linux + Windows.
+        os: ${{ fromJSON((github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && '["macos-latest", "windows-latest", "ubuntu-latest"]' || '["windows-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

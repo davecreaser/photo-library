@@ -34,4 +34,8 @@ Tests that touch a photo folder snapshot it before and after (excluding `.DS_Sto
 
 ## Workflow
 
-New features go through `/feature` (`.claude/skills/feature/`): spec (`docs/specs/`, product agent) → design (designer agent) → build → review (reviewer agent) → QA (qa agent) → PR. The user approves the spec and design, and merges PRs. Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merges.
+New features go through `/feature` (`.claude/skills/feature/`): spec (`docs/specs/`, product agent) → design (designer agent) → build → review (reviewer agent) → QA (qa agent) → PR, with CI watched to green. The user approves the spec and design, and merges PRs. Product context: `docs/product/brief.md`; candidate features are GitHub issues labelled `idea`.
+
+Headless version (`.github/workflows/agent.yml`): on an `idea` issue the owner comments `approved` (spec + design posted, label `spec-ready`), then `go` (build, review, QA, PR; label `pr-ready`), or `revise: …`, or `approved, no spec` for small changes. Only the owner's comments trigger it.
+
+Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merges. One PR at a time against `main`; no stacked PRs. CI runs Linux + Windows on PRs and `feat/**` pushes; macOS on `main` and manual runs.

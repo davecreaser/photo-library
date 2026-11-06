@@ -92,7 +92,158 @@ These aren't screens; they're constraints the design and build must satisfy and 
 
 ## Design
 
-_Filled in by the design step._
+Content search adds no new screen. It lives in the existing search box, the search view's results grid and the top bar's status area. Everything below reuses existing patterns: the top bar's scan status (`.scan-status`), the grid meta line (`.grid-meta`), `.hint`, `.empty`, `.error` and the People view's section headings (`.people h2`). Curly quotes (“ ”) and the ellipsis character (…) are used as in the rest of the app.
+
+### Terms used here
+
+- **Content phrase**: what's left of the query after dates, people's names and filler words are taken out (see AC-4, AC-6). The UI shows it in quotes so the user can see what was searched for by content. Examples: "jake beach august 2025" gives “beach”; "show me photos of dogs on the beach" gives “dogs beach” (or whatever the build's phrase rules leave).
+- **Name matches**: what search finds today (folder/file names, albums, tags, people). **Content matches**: photos that look like the content phrase.
+
+### Where it lives
+
+- **Search box** (top bar), as today. Typing still debounces by 250 ms into the search view, and clearing the box still returns to All photos.
+- **Search view** (`view.kind === 'search'`): title `“{query}”` as today, then the meta line, an optional hint line, and the grid.
+- **Top bar status** (`.scan-status`, left of Rescan): shows content-analysis progress, and a quiet "unavailable" note.
+- Face analysis stays where it is: the percentage on the sidebar's People item and the hint at the top of the People view. The two analyses are never shown in the same place, so their counts never get confused (AC-7).
+
+### Search box placeholder
+
+- Content search available, or still analysing: `Search: “sunset over water”, “jake 2025”, “poland”…`
+  (one content query, a person plus a date, a folder name)
+- Content search unavailable (AC-9): today's placeholder, unchanged: `Search: “august 2025”, “poland”, “jake”…`
+
+### Results: one list, name matches first
+
+One grid, in one order: name matches first (today's order), then content matches, best match first (decided in the spec). When **both** groups have photos, a full-width divider row sits in the grid just before the first content match:
+
+- Divider label: `Looks like “{content phrase}”`
+- Style: a grid row spanning every column (`grid-column: 1 / -1`), styled like `.people h2` but muted and 12px, with a hairline in `var(--border)` above it and 10px of space either side. It isn't a tile: it can't be clicked or selected, and shift-click ranges pass over it (selection indices only count tiles).
+- With paging (300 a page), the divider shows once, at the position of the first content match, on whichever page it falls. The grid needs a count of name matches from the query to place it.
+
+No divider when there are only name matches or only content matches; the meta line says which.
+
+No label on the name-matches group: it comes first, it's what search has always shown, and the meta line already says "by name".
+
+### Grid meta line (search view only)
+
+Today's line is `{N} photos · ⌘-click or shift-click to select` (or `· {n} selected`). In the search view:
+
+| Situation                                           | Meta line                                                                        |
+| --------------------------------------------------- | -------------------------------------------------------------------------------- |
+| No content phrase (e.g. "jake", "august 2025")      | Unchanged: `{N} photos · ⌘-click or shift-click to select` (AC-5)                |
+| Name and content matches                            | `{N} photos · {a} by name, then {b} that look like “{phrase}”, best match first` |
+| Content matches only                                | `{N} photos that look like “{phrase}” · best match first`                        |
+| Name matches only, content phrase found nothing     | `{N} photos by name · none look like “{phrase}”`                                 |
+| Any of the above with a selection                   | the part after the first `·` is kept and `· {n} selected` is added at the end    |
+| Loading a new search (until the first page arrives) | `Searching…`                                                                     |
+
+Counts use `toLocaleString()` and "photo"/"photos" agrees with the number (`1 photo`). "Best match first" is the hint that results are ranked by relevance, not by date; no scores or badges are shown on tiles. Tile tooltips stay `{fileName} · {date}`.
+
+While a new search loads, the previous results stay in place (as today) and the meta line reads `Searching…`, so the first content search after launch, which may take up to a second while the text model loads, doesn't look stuck.
+
+### Hint line under the meta line (search view, only when there's a content phrase)
+
+Shown as a `.hint` paragraph between the meta line and the grid. At most one at a time:
+
+- **Analysis still running (AC-7):**
+  `Still analysing your photos: {done} of {total} done, {estimate}. Photos not analysed yet can only be found by name.` followed by a link-style button `Refresh results`.
+  When analysis finishes while the user is on the results, the hint changes to:
+  `All photos are now analysed.` followed by `Refresh results`.
+  Results never reorder by themselves while the user is looking at them; `Refresh results` re-runs the same query and scrolls to the top. The hint disappears after a refresh once analysis is done.
+- **Re-analysing for a new model version (AC-10):** same as above but starting `Updating search for a new version: {done} of {total} done, {estimate}.` Search only uses photos the new version has analysed, so this is the same state as a first run.
+- **Content search unavailable (AC-9):** `.hint` with the first sentence in `var(--danger)`:
+  `Content search is unavailable: {reason} {fix}` then `Names, albums, tags, people and dates are still searched.`
+  - `{reason}`: `its model file is missing.` or `its model file is damaged (checksum didn't match).`
+  - `{fix}`, packaged app: `Reinstall Photo Library to fix this.`; development build: `Run “npm run fetch-models”, then restart the app.`
+
+When the query has no content phrase (AC-5 case), no hint is shown, even during analysis or when unavailable: the results are exactly today's, so there's nothing to warn about.
+
+### Empty result (AC-2)
+
+Uses `.empty`, replacing today's `No photos here yet.` in the search view only:
+
+- Normal: `No photos matched “{query}”.`
+  second line (`.hint`): `Search looks at what’s in your photos, and at folder and file names, albums, tags, people and dates. Try different or fewer words.`
+- While analysis is running: `No photos matched “{query}” yet.`
+  second line: `{done} of {total} photos are analysed so far; more may match when analysis finishes ({estimate}).`
+- Content search unavailable: `No photos matched “{query}”.`
+  second line: `Content search is unavailable, so only names, albums, tags, people and dates were searched.`
+
+No near-misses or "closest results" are shown: strict no-match was decided in the spec.
+
+### Top bar status (`.scan-status`)
+
+Order of precedence, highest first (only one shows):
+
+1. Scanning (today's): `Reading new photos… {indexed} / {found}` or `Checking… …`
+2. Scan failed (today's): `Scan failed: {error}`
+3. **Content analysis running:** `Analysing photos for search… {done} / {total} · {estimate}`
+   Model upgrade: `Updating search… {done} / {total} · {estimate}`
+   Tooltip (`title`): `Photo Library is learning what’s in each photo, on this computer, so you can search for things like “beach” or “dog”. Each photo is analysed once; you can keep using the app, and search uses the photos done so far.`
+4. After a scan (today's): `{n} new, {m} moved/copied · {N} photos`
+5. **Content search unavailable:** `{N} photos · content search unavailable` (the second part in `.error`), tooltip: the same `{reason} {fix}` text as the search hint.
+6. Idle (today's): `{N} photos`
+
+Analysis starts right after a scan, so state 3 replaces the "N new" summary while it runs. For a rescan that adds a few photos this lasts seconds (`Analysing photos for search… 3 / 12 · less than a minute left`).
+
+The first run's estimate is shown as soon as analysis starts, so a large library sees "about 14 h left" up front (Product section).
+
+### Time estimate copy (`{estimate}`)
+
+Based on the average rate over the last ~2 minutes of analysis (or since it started, if less):
+
+- Until 20 photos or 15 seconds have been done: `estimating time…`
+- Under 1 minute: `less than a minute left`
+- 1 to 59 minutes: `about {m} min left` (rounded up)
+- 1 hour or more: `about {h} h left` (rounded to the nearest hour, minimum 1)
+
+In the empty-state sentence the bracketed form drops "left": `(about 4 min)`, `(less than a minute)`, or the bracket is omitted while estimating.
+
+### Interactions
+
+- Typing, debounce, clearing and leaving search work as today. Every view change clears the search, as today.
+- Clicking a tile opens the viewer on the results in the shown order; ←/→ move through name matches then content matches, as listed (the divider isn't a stop).
+- ⌘/Ctrl-click and shift-click select as today, across the divider. The selection bar (albums, tags) works unchanged, so a content search is a quick way to tag photos ("beach" → select → tag _beach_), after which they become name matches.
+- `Refresh results` (link-style `button.link`, as in the sidebar footer) re-runs the current query.
+- No undo is needed: nothing here changes data.
+
+### States per screen
+
+**Search view**
+
+- Loading: previous results stay, meta `Searching…`.
+- Populated: meta line per the table; divider when both groups exist.
+- Empty: `.empty` copy above.
+- Analysis running: hint line with `Refresh results`; results use analysed photos only.
+- Unavailable: hint line in danger colour; name search works as today.
+- Very large library (100k): same states; paging adds 300 at a time as today, counts are exact, the divider appears once. A 14 h first run reads `about 14 h left`.
+
+**Top bar**: states 1–6 above.
+
+**People view / sidebar**: unchanged; face progress stays separate.
+
+**Viewer, albums, tags, events, timeline**: unchanged; content search isn't offered inside other views (non-goal).
+
+### What the grid needs from a search query (for the build)
+
+Not an API design, just the facts the UI shows: total count, count of name matches (to place the divider), the content phrase (or none), and content-analysis state (`analysing` / `idle` / `unavailable` with done, total, estimate and reason). Progress arrives like `onFaceProgress`, as its own event.
+
+### Traceability
+
+- **AC-1** Finds what's in the photo: content-only meta line `{N} photos that look like “red” · best match first`; grid in relevance order; paging as today (no visual repeat/skip). Repeat/skip tested by query paging tests.
+- **AC-2** Honest results: empty state `No photos matched “{query}”.` with its hint; threshold and stable ordering have no UI, tested by query tests on generated images.
+- **AC-3** Only present photos, once: no UI; tested by query tests (missing, ignored, multiple copies).
+- **AC-4** Combines with dates and people: title shows the full query; meta line quotes only the content phrase (`look like “beach”` for "jake beach august 2025"), showing date/person words aren't in it; filtering tested by query tests.
+- **AC-5** Never worse than today: no-content-phrase meta line and grid unchanged, no hint; name matches first, then divider `Looks like “…”`, then content matches; meta `{a} by name, then {b} that look like …`.
+- **AC-6** Natural phrasing: meta line's quoted phrase shows the filler words gone; tested by parser tests.
+- **AC-7** Analysis in the background: top bar `Analysing photos for search… {done} / {total} · {estimate}`, separate from People's face percentage; search hint `Still analysing your photos: …` with `Refresh results`; empty-state `… yet.` variant. Newest-first order and responsiveness tested by analysis tests and AC-12 measurements.
+- **AC-8** Analysed once per photo: no UI beyond short progress after a rescan (`… 3 / 12 · less than a minute left`); tested by resume/rescan/move/edit tests.
+- **AC-9** Every format, graceful failures: unavailable placeholder, top bar `content search unavailable` with fix tooltip, search hint `Content search is unavailable: … {fix}`, unavailable empty-state line. HEIC/RAW and unreadable-photo handling have no UI; tested by analysis tests.
+- **AC-10** Model upgrades: top bar `Updating search… {done} / {total} · {estimate}` and hint `Updating search for a new version: …`; no-mixing tested by model-version tests.
+- **AC-11** Good enough to trust: no UI; judged by the owner using the populated search view, recorded in the PR.
+- **AC-12** Fast at scale: `Searching…` covers the ≤ 1 s first search; very-large-library states above; numbers measured and recorded in the PR.
+- **AC-13** Local and safe: no UI; tested by offline/network, snapshot and safety-audit tests, and ignore-forgets-analysis tests.
+- **AC-14** Upgrade: after upgrade the top bar shows the first-run analysis state for every present photo; data kept is tested by the migration test.
 
 ## Open questions
 
@@ -112,3 +263,4 @@ None open; all resolved below. The owner supplies their five evaluation queries 
 - 2026-11-06: Strict "no match" (empty result) in this version.
 - 2026-11-06: Owner chose `sqlite-vec` behind a module over brute force (lower memory, SQL filtering, and the owner's goal of exploring vector databases), accepting the pre-1.0 dependency risk.
 - 2026-11-06: Spec trimmed from 39 to 14 acceptance criteria at the owner's request.
+- 2026-11-06 (design): Results never refresh by themselves during analysis; a "Refresh results" link re-runs the search. Only content matches get a divider ("Looks like …"). Analysis progress replaces the top bar's "N new" note while it runs; face progress stays with People. No UI for photos that couldn't be analysed.

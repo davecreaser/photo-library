@@ -39,9 +39,9 @@ New features go through `/feature` (`.claude/skills/feature/`): spec (`docs/spec
 
 Ideas start as the owner's plain words: `/idea <words>` (`.claude/skills/idea/`), or headlessly an issue the owner opens with no labels (bugs get the `bug` label to skip it). The agent validates the idea against the brief, ADRs, code and existing issues, and writes it up as an `idea` issue with its Validation section and the owner's words kept verbatim; commenting `idea` re-validates.
 
-Headless version (`.github/workflows/agent.yml`): on an `idea` issue the owner comments `approved` (spec + design posted, label `spec-ready`), then `go` (build, review, QA, PR; label `pr-ready`), or `revise: …`, or `approved, no spec` for small changes. Only the owner's comments trigger it.
+Headless version (`.github/workflows/agent.yml`): on an `idea` issue the owner comments `approved` (spec + design posted, label `spec-ready`), then `go` (build, review, QA, PR; label `pr-ready`), or `revise: …`, or `approved, no spec` for small changes. On a PR that has fallen behind main or conflicts with it, `update` merges main in, resolves the conflicts (renumbering a clashing schema version or spec), and re-checks. Only the owner's comments trigger it.
 
-Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merges. One PR at a time against `main`; no stacked PRs. CI runs Linux + Windows on PRs and `feat/**` pushes; macOS on `main` and manual runs.
+Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merging PRs. Several features can be in flight at once, each its own PR against `main` (no stacked PRs); merge main in rather than rebasing. CI runs Linux + Windows on PRs and `feat/**` pushes; macOS on `main` and manual runs.
 
 ## Working with the owner
 

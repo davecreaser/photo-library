@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import type { Album, FaceProgress, LibraryInfo, Person, Tag, TimelineMonth } from '../../../shared/types.ts'
+import type { SidebarSections } from '../../../shared/sidebarSections.ts'
 import type { View } from '../App.tsx'
 import { monthName } from '../format.ts'
 import { InlineInput } from './InlineInput.tsx'
 
 interface Props {
   library: LibraryInfo
+  sections: SidebarSections
+  onSectionsChange: (s: SidebarSections) => void
   view: View
   albums: Album[]
   tags: Tag[]
@@ -25,6 +28,8 @@ const api = window.api
 
 export function Sidebar({
   library,
+  sections,
+  onSectionsChange,
   view,
   albums,
   tags,
@@ -54,6 +59,24 @@ export function Sidebar({
       else next.add(y)
       return next
     })
+
+  const toggleSection = (k: keyof SidebarSections) => onSectionsChange({ ...sections, [k]: !sections[k] })
+  /** A focusable ▾/▸ toggle; `what` is "people", "albums" or "tags". */
+  const sectionToggle = (k: keyof SidebarSections, what: string) => (
+    <button
+      type="button"
+      className="disclosure"
+      aria-expanded={sections[k]}
+      aria-label={`${sections[k] ? 'Hide' : 'Show'} ${what}`}
+      title={`${sections[k] ? 'Hide' : 'Show'} ${what}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        toggleSection(k)
+      }}
+    >
+      {sections[k] ? '▾' : '▸'}
+    </button>
+  )
 
   const isActive = (v: View) => JSON.stringify(v) === JSON.stringify(view)
 
@@ -148,47 +171,74 @@ export function Sidebar({
           <span className="label">✨ Suggested albums</span>
           <span className="count">{suggestionCount > 0 ? suggestionCount.toLocaleString() : ''}</span>
         </div>
-        <div className={`nav-item ${view.kind === 'people' ? 'active' : ''}`} onClick={() => onNavigate({ kind: 'people' })}>
-          <span className="label">👤 People</span>
+        <div
+          className={`nav-item ${view.kind === 'people' || (!sections.people && view.kind === 'person') ? 'active' : ''}`}
+          onClick={() => onNavigate({ kind: 'people' })}
+        >
+          <span className="label">{people.length > 0 ? sectionToggle('people', 'people') : <span className="disclosure" />} 👤 People</span>
           <span className="count">
             {faceProgress?.phase === 'analysing' ? `${Math.floor((faceProgress.done / Math.max(1, faceProgress.total)) * 100)}%` : people.length || ''}
           </span>
         </div>
-        {people.slice(0, 12).map((p) => (
-          <div
-            key={p.id}
-            className={`nav-item person ${view.kind === 'person' && view.id === p.id ? 'active' : ''}`}
-            onClick={() => onNavigate({ kind: 'person', id: p.id })}
-          >
-            <span className="label">
-              {p.coverFaceId && <img className="avatar" src={`photo://face/${p.coverFaceId}`} alt="" />} {p.name}
-            </span>
-            <span className="count">{p.photoCount}</span>
-          </div>
-        ))}
+        {sections.people &&
+          people.slice(0, 12).map((p) => (
+            <div
+              key={p.id}
+              className={`nav-item person ${view.kind === 'person' && view.id === p.id ? 'active' : ''}`}
+              onClick={() => onNavigate({ kind: 'person', id: p.id })}
+            >
+              <span className="label">
+                {p.coverFaceId && <img className="avatar" src={`photo://face/${p.coverFaceId}`} alt="" />} {p.name}
+              </span>
+              <span className="count">{p.photoCount}</span>
+            </div>
+          ))}
       </section>
 
       <section>
-        <h2>
-          Albums
-          <button title="New album" onClick={() => setCreatingUnder(null)}>
+        <h2 className={!sections.albums && view.kind === 'album' ? 'active' : ''}>
+          <span className="heading-label" onClick={() => toggleSection('albums')}>
+            {sectionToggle('albums', 'albums')} Albums
+          </span>
+          <span className="heading-count">{albums.length}</span>
+          <button
+            title="New album"
+            onClick={() => {
+              if (!sections.albums) onSectionsChange({ ...sections, albums: true })
+              setCreatingUnder(null)
+            }}
+          >
             ＋
           </button>
         </h2>
-        {creatingUnder === null && <InlineInput placeholder="Album name" onSubmit={createAlbum} onCancel={() => setCreatingUnder(undefined)} />}
-        {albums.length === 0 && creatingUnder === undefined && <p className="hint">Albums are virtual folders. Adding photos never moves the files.</p>}
-        {renderAlbums(null, 0)}
+        {sections.albums && creatingUnder === null && (
+          <InlineInput placeholder="Album name" onSubmit={createAlbum} onCancel={() => setCreatingUnder(undefined)} />
+        )}
+        {sections.albums && albums.length === 0 && creatingUnder === undefined && (
+          <p className="hint">Albums are virtual folders. Adding photos never moves the files.</p>
+        )}
+        {sections.albums && renderAlbums(null, 0)}
       </section>
 
       {tags.length > 0 && (
         <section>
-          <h2>Tags</h2>
-          {tags.map((t) => (
-            <div key={t.id} className={`nav-item ${isActive({ kind: 'tag', id: t.id }) ? 'active' : ''}`} onClick={() => onNavigate({ kind: 'tag', id: t.id })}>
-              <span className="label">#{t.name}</span>
-              <span className="count">{t.photoCount}</span>
-            </div>
-          ))}
+          <h2 className={!sections.tags && view.kind === 'tag' ? 'active' : ''}>
+            <span className="heading-label" onClick={() => toggleSection('tags')}>
+              {sectionToggle('tags', 'tags')} Tags
+            </span>
+            <span className="heading-count">{tags.length}</span>
+          </h2>
+          {sections.tags &&
+            tags.map((t) => (
+              <div
+                key={t.id}
+                className={`nav-item ${isActive({ kind: 'tag', id: t.id }) ? 'active' : ''}`}
+                onClick={() => onNavigate({ kind: 'tag', id: t.id })}
+              >
+                <span className="label">#{t.name}</span>
+                <span className="count">{t.photoCount}</span>
+              </div>
+            ))}
         </section>
       )}
 

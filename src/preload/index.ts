@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Api, ContentProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
 
 const api: Api = {
+  getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),
+  setSidebarSections: (s) => ipcRenderer.invoke('sidebar:set', s),
   getLibrary: () => ipcRenderer.invoke('library:get'),
   chooseBaseFolder: () => ipcRenderer.invoke('library:chooseBase'),
   startScan: () => ipcRenderer.invoke('scan:start'),

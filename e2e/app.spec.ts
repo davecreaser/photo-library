@@ -553,3 +553,36 @@ test('content search unavailable (AC-9): says why and how to fix it; search by n
     await expect(page.locator('.empty')).toContainText('Content search is unavailable, so only names, albums, tags, people and dates were searched.')
   })
 })
+
+test('sidebar sections (spec 0004): Albums and Tags collapse, People has no toggle without people, choices survive relaunch', async () => {
+  test.setTimeout(240_000)
+  await app.close()
+  await launch(lib.root, NO_MODELS())
+  await chooseLibrary()
+  await page.evaluate(() => window.api.createAlbum('Holiday', null))
+  await page.getByRole('button', { name: 'Rescan' }).click()
+  const albumRow = page.locator('.nav-item.album', { hasText: 'Holiday' })
+  await expect(albumRow).toBeVisible()
+  // AC-1/AC-2: no people named, so no People toggle.
+  await expect(page.getByRole('button', { name: /^(Show|Hide) people$/ })).toHaveCount(0)
+  // AC-3/AC-4/AC-8: collapse Albums with the keyboard-operable toggle; the count stays.
+  const toggle = page.getByRole('button', { name: 'Hide albums' })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await toggle.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: 'Show albums' })).toHaveAttribute('aria-expanded', 'false')
+  await expect(albumRow).toHaveCount(0)
+  await expect(page.locator('.sidebar h2', { hasText: 'Albums' }).locator('.heading-count')).toHaveText('1')
+  // AC-6: ＋ expands first, then shows the input.
+  await page.getByTitle('New album').click()
+  await expect(albumRow).toBeVisible()
+  await expect(page.getByPlaceholder('Album name')).toBeVisible()
+  await page.keyboard.press('Escape')
+  // AC-7: collapse again, relaunch, still collapsed.
+  await page.getByRole('button', { name: 'Hide albums' }).click()
+  await expect(page.getByRole('button', { name: 'Show albums' })).toBeVisible()
+  await app.close()
+  await launch(lib.root, NO_MODELS())
+  await expect(page.getByRole('button', { name: 'Show albums' })).toBeVisible()
+  await expect(page.locator('.nav-item.album')).toHaveCount(0)
+})

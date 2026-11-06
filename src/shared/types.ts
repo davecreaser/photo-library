@@ -1,3 +1,4 @@
+import type { SidebarSections } from './sidebarSections.ts'
 // Types shared between the main process, preload and renderer.
 
 /**
@@ -206,6 +207,9 @@ export interface LibraryInfo {
 }
 
 export interface Api {
+  /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */
+  getSidebarSections(): Promise<SidebarSections>
+  setSidebarSections(s: SidebarSections): Promise<void>
   getLibrary(): Promise<LibraryInfo>
   chooseBaseFolder(): Promise<LibraryInfo | null>
   startScan(): Promise<void>

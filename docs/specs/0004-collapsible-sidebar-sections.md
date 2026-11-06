@@ -1,6 +1,6 @@
 # 0004: Collapsible sidebar sections
 
-Status: draft
+Status: approved
 Issue: #41
 
 ## Problem
@@ -93,3 +93,4 @@ AC-1/2: People row states. AC-3/4: Albums/Tags heading. AC-5: active highlight r
 - 2026-11-06: People is collapsed by default (idea question 2; owner: yes).
 - 2026-11-06: If a person is the current view while People is collapsed, show no extra person row; the People row is highlighted instead (idea question 3; recommended answer).
 - 2026-11-06: Albums and Tags can also be collapsed (idea question 4; owner: yes). Whether they start collapsed is open question 1.
+- 2026-11-06: Albums and Tags start open (open question 1; owner replied `go`, so the recommended answer).

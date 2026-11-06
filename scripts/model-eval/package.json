@@ -1,0 +1,12 @@
+{
+  "name": "photo-library-model-eval",
+  "private": true,
+  "type": "module",
+  "description": "Spec 0002 model evaluation. Separate install: never an app dependency.",
+  "scripts": {
+    "download": "./download.sh"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.1"
+  }
+}

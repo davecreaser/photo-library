@@ -5,3 +5,5 @@ dist
 resources/models
 playwright-report
 test-results
+scripts/model-eval/node_modules
+scripts/model-eval/results

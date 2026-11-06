@@ -14,7 +14,7 @@ import { correctedTime, correctionApplies, type Correction } from './dates.ts'
 import type { EventGroup } from './events.ts'
 import { VECTOR_SCHEMA, VectorStore } from './vectorStore.ts'
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -141,6 +141,14 @@ CREATE TABLE IF NOT EXISTS suggestion_decision_photos (
 );
 CREATE INDEX IF NOT EXISTS suggestion_decision_photos_photo ON suggestion_decision_photos (photo_id);
 
+-- "Not these" on new photos offered for an album (spec 0003), kept by photo.
+CREATE TABLE IF NOT EXISTS offer_declines (
+  album_id INTEGER NOT NULL REFERENCES albums (id) ON DELETE CASCADE,
+  photo_id INTEGER NOT NULL REFERENCES photos (id) ON DELETE CASCADE,
+  PRIMARY KEY (album_id, photo_id)
+);
+CREATE INDEX IF NOT EXISTS offer_declines_photo ON offer_declines (photo_id);
+
 CREATE TABLE IF NOT EXISTS clock_corrections (
   id INTEGER PRIMARY KEY,
   camera TEXT NOT NULL,
@@ -262,6 +270,7 @@ export class LibraryDb {
         this.db.exec('ALTER TABLE photos ADD COLUMN faces_version INTEGER')
       }
       this.db.exec(SCHEMA)
+      // v5 -> v6: offer_declines (spec 0003) is created by SCHEMA above.
       // v4 -> v5: content analysis (spec 0002). Every present photo gets analysed.
       if (!this.db.prepare("SELECT 1 FROM pragma_table_info('photos') WHERE name = 'content_version'").get()) {
         this.db.exec('ALTER TABLE photos ADD COLUMN content_version INTEGER')
@@ -453,6 +462,8 @@ export class LibraryDb {
         'DELETE FROM suggestion_decisions WHERE id IN (SELECT dp.decision_id FROM suggestion_decision_photos dp JOIN files f ON f.photo_id = dp.photo_id WHERE f.id = ?)'
       )
       ids.forEach((id) => forgetDecision.run(id))
+      const forgetDecline = this.db.prepare('DELETE FROM offer_declines WHERE photo_id IN (SELECT photo_id FROM files WHERE id = ?)')
+      ids.forEach((id) => forgetDecline.run(id))
       const del = this.db.prepare('DELETE FROM files WHERE id = ?')
       ids.forEach((id) => del.run(id))
       return this.deletePhotosWhere('NOT EXISTS (SELECT 1 FROM files WHERE photo_id = photos.id)')
@@ -989,6 +1000,69 @@ export class LibraryDb {
       end: (r.end as string) ?? null,
       coverId: (r.cover as number) ?? null
     }))
+  }
+
+  // --- new photos for an album (spec 0003) ---
+
+  /** Albums made from suggestions: their name and every photo of their accepted decisions (missing ones too) with capture times. */
+  offerSources(): { albumId: number; name: string; photoIds: number[]; times: string[] }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT a.id AS album_id, a.name, dp.photo_id, p.taken_at
+         FROM suggestion_decisions d
+         JOIN albums a ON a.id = d.album_id
+         JOIN suggestion_decision_photos dp ON dp.decision_id = d.id
+         JOIN photos p ON p.id = dp.photo_id
+         WHERE d.kind = 'accepted'`
+      )
+      .all() as Row[]
+    const byAlbum = new Map<number, { albumId: number; name: string; photoIds: number[]; times: string[] }>()
+    for (const r of rows) {
+      const id = r.album_id as number
+      let a = byAlbum.get(id)
+      if (!a) byAlbum.set(id, (a = { albumId: id, name: r.name as string, photoIds: [], times: [] }))
+      a.photoIds.push(r.photo_id as number)
+      if (r.taken_at) a.times.push(r.taken_at as string)
+    }
+    return [...byAlbum.values()]
+  }
+
+  /** Photos declined per album. */
+  offerDeclines(): Map<number, Set<number>> {
+    const declined = new Map<number, Set<number>>()
+    for (const r of this.db.prepare('SELECT album_id, photo_id FROM offer_declines').all() as Row[]) {
+      const id = r.album_id as number
+      const set = declined.get(id)
+      if (set) set.add(r.photo_id as number)
+      else declined.set(id, new Set([r.photo_id as number]))
+    }
+    return declined
+  }
+
+  addOfferDeclines(albumId: number, photoIds: number[]): void {
+    this.transaction(() => {
+      const add = this.db.prepare('INSERT OR IGNORE INTO offer_declines (album_id, photo_id) VALUES (?, ?)')
+      photoIds.forEach((p) => add.run(albumId, p))
+    })
+  }
+
+  removeOfferDeclines(albumId: number, photoIds: number[]): void {
+    this.transaction(() => {
+      const del = this.db.prepare('DELETE FROM offer_declines WHERE album_id = ? AND photo_id = ?')
+      photoIds.forEach((p) => del.run(albumId, p))
+    })
+  }
+
+  /** Adds photos to the album and to its source decision, so removing one later doesn't make it "new" again. */
+  addOfferedToAlbum(albumId: number, photoIds: number[]): void {
+    this.transaction(() => {
+      const d = this.db.prepare("SELECT id FROM suggestion_decisions WHERE album_id = ? AND kind = 'accepted' ORDER BY id LIMIT 1").get(albumId) as
+        Row | undefined
+      if (!d) throw new Error('That album is no longer offered new photos.')
+      this.addToAlbum(albumId, photoIds)
+      const add = this.db.prepare('INSERT OR IGNORE INTO suggestion_decision_photos (decision_id, photo_id) VALUES (?, ?)')
+      photoIds.forEach((p) => add.run(d.id as number, p))
+    })
   }
 
   // --- event merges/renames (pre-0001; only read to convert old merges into albums) ---

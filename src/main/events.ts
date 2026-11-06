@@ -43,7 +43,7 @@ function bestName(dirs: string[]): string | null {
   return names.sort((a, b) => b.length - a.length)[0] ?? null
 }
 
-function dateLabel(start: string, end: string): string {
+export function dateLabel(start: string, end: string): string {
   const fmt = (iso: string, opts: Intl.DateTimeFormatOptions) => new Date(iso + 'Z').toLocaleDateString('en-GB', { timeZone: 'UTC', ...opts })
   if (start.slice(0, 10) === end.slice(0, 10)) return fmt(start, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   if (start.slice(0, 7) === end.slice(0, 7)) return `${fmt(start, { day: 'numeric' })}–${fmt(end, { day: 'numeric', month: 'short', year: 'numeric' })}`

@@ -147,6 +147,34 @@ export interface PhotoFilter {
 export interface PhotoPage {
   photos: Photo[]
   total: number
+  /** For a search: how its results are made up (spec 0002). */
+  search?: SearchInfo
+}
+
+/** A search's results are its name matches (today's search), then its content matches, best first. */
+export interface SearchInfo {
+  /** What's left of the search after dates, people's names and filler words; null when nothing is. */
+  phrase: string | null
+  /** Photos found by folder/file name, album, tag or person; they come first. */
+  nameMatches: number
+  /** Photos that look like the phrase (and aren't name matches). */
+  contentMatches: number
+}
+
+/** Background analysis of what's in each photo, for content search (spec 0002). */
+export interface ContentProgress {
+  phase: 'analysing' | 'idle' | 'unavailable'
+  /** Present photos analysed by the current model, of all present photos. */
+  done: number
+  total: number
+  /** True while re-analysing photos for a new model version. */
+  upgrading: boolean
+  /** Estimated seconds left; null until there's enough to go on. */
+  secondsLeft: number | null
+  /** Why content search is unavailable: the model file is missing or damaged, or the search component failed to load. */
+  reason?: 'missing' | 'damaged' | 'failed'
+  /** True in the installed app (the fix is to reinstall), false in a development build. */
+  packaged: boolean
 }
 
 export interface ScanProgress {
@@ -191,7 +219,10 @@ export interface Api {
   forgetMissing(): Promise<void>
   onScanProgress(cb: (p: ScanProgress) => void): () => void
 
+  /** A view's photos. A search returns name matches first, then content matches best first (spec 0002). */
   queryPhotos(filter: PhotoFilter): Promise<PhotoPage>
+  getContentProgress(): Promise<ContentProgress>
+  onContentProgress(cb: (p: ContentProgress) => void): () => void
   getPhoto(id: number): Promise<PhotoDetails | null>
   getTimeline(): Promise<TimelineMonth[]>
   getSuggestions(): Promise<SuggestedAlbum[]>

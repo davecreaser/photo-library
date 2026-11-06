@@ -10,6 +10,8 @@ import { scanLibrary } from './scanner.ts'
 import { ImageCache } from './thumbnails.ts'
 import { Organiser } from './organiser.ts'
 import { People } from './people.ts'
+import { Analysis } from './analysis.ts'
+import { PhotoSearch } from './photoSearch.ts'
 import type { ClockCorrection, LibraryInfo, PhotoFilter } from '../shared/types.ts'
 
 // photo://thumb/<id> and photo://full/<id> serve images to the UI.
@@ -19,6 +21,8 @@ let db: LibraryDb
 let images: ImageCache
 let organiser: Organiser
 let people: People
+let analysis: Analysis
+let search: PhotoSearch
 let window: BrowserWindow | null = null
 let currentScan: Promise<void> | null = null
 let scanAgain = false
@@ -100,7 +104,7 @@ function startScan(): Promise<void> {
         (p) => {
           if (p.phase === 'done') {
             organiser.invalidate()
-            people.kick() // analyse faces in any new photos
+            void analysis.kick() // analyse faces and content in any new photos
           }
           window?.webContents.send('scan:progress', p)
         },
@@ -195,8 +199,9 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('photos:query', (_e, filter: PhotoFilter) =>
-    db.queryPhotos(filter, filter.suggestionId ? organiser.suggestionPhotoIds(filter.suggestionId) : undefined)
+    search.query(filter, filter.suggestionId ? organiser.suggestionPhotoIds(filter.suggestionId) : undefined)
   )
+  ipcMain.handle('content:progress', () => analysis.contentProgress())
   ipcMain.handle('photos:get', (_e, id: number) => db.getPhoto(id))
   ipcMain.handle('photos:timeline', () => db.getTimeline())
   ipcMain.handle('photos:reveal', (_e, id: number) => {
@@ -260,9 +265,17 @@ app.whenReady().then(() => {
   } catch (e) {
     console.error('Converting old merged events failed; will retry next launch', e)
   }
-  people = new People(db, join(__dirname, '..', '..', 'resources', 'models'), images, join(dataDir, 'cache', 'faces'), (p) =>
-    window?.webContents.send('people:progress', p)
-  )
+  const modelsDir = join(__dirname, '..', '..', 'resources', 'models')
+  people = new People(db, modelsDir, join(dataDir, 'cache', 'faces'), (p) => window?.webContents.send('people:progress', p))
+  analysis = new Analysis({
+    db,
+    people,
+    images,
+    modelsDir,
+    packaged: app.isPackaged,
+    onContentProgress: (p) => window?.webContents.send('content:progress', p)
+  })
+  search = new PhotoSearch(db, () => analysis.contentModel())
   loadProtectedRoots()
   registerPhotoProtocol()
   registerIpc()

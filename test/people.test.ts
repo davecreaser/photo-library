@@ -7,7 +7,6 @@ import { installFsGuard } from '../src/main/fsGuard.ts'
 import { LibraryDb } from '../src/main/db.ts'
 import { People } from '../src/main/people.ts'
 import { FACE_MODEL_VERSION, normalise } from '../src/main/faces.ts'
-import type { ImageCache } from '../src/main/thumbnails.ts'
 
 installFsGuard({ allowedRoots: () => [tmpdir()], protectedRoots: () => [] })
 
@@ -19,7 +18,7 @@ const faceOf = (p: Float32Array) => normalise(p.map((x) => x + rand() * 0.12))
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'pl-people-'))
   const db = new LibraryDb(join(dir, 'library.db'))
-  const people = new People(db, '/nonexistent', null as unknown as ImageCache, join(dir, 'faces'), () => {})
+  const people = new People(db, '/nonexistent', join(dir, 'faces'), () => {})
   const meta = (path: string) => ({
     path,
     size: 1,

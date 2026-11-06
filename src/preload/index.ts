@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, FaceProgress, ScanProgress } from '../shared/types.ts'
+import type { Api, ContentProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
 
 const api: Api = {
   getLibrary: () => ipcRenderer.invoke('library:get'),
@@ -16,6 +16,12 @@ const api: Api = {
   },
 
   queryPhotos: (filter) => ipcRenderer.invoke('photos:query', filter),
+  getContentProgress: () => ipcRenderer.invoke('content:progress'),
+  onContentProgress: (cb) => {
+    const listener = (_e: unknown, p: ContentProgress) => cb(p)
+    ipcRenderer.on('content:progress', listener)
+    return () => ipcRenderer.removeListener('content:progress', listener)
+  },
   getPhoto: (id) => ipcRenderer.invoke('photos:get', id),
   getTimeline: () => ipcRenderer.invoke('photos:timeline'),
   revealInFinder: (id) => ipcRenderer.invoke('photos:reveal', id),

@@ -7,13 +7,14 @@
 // hash at the new path and links it to the same photo.
 import { DatabaseSync } from 'node:sqlite'
 import { basename, extname, relative, dirname, sep } from 'node:path'
-import { parseSearch } from '../shared/search.ts'
+import { parseSearch, splitSearch, type SearchPlan } from '../shared/search.ts'
 import type { Album, FaceGroup, Person, PersonFace, Photo, PhotoDetails, PhotoFilter, PhotoPage, Tag, TimelineMonth } from '../shared/types.ts'
 import type { FaceVector, KnownPerson } from './faceGroups.ts'
 import { correctedTime, correctionApplies, type Correction } from './dates.ts'
 import type { EventGroup } from './events.ts'
+import { VECTOR_SCHEMA, VectorStore } from './vectorStore.ts'
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -36,6 +37,8 @@ CREATE TABLE IF NOT EXISTS photos (
   favorite INTEGER,
   -- Version of the face model that analysed this photo (NULL = not yet).
   faces_version INTEGER,
+  -- Version of the content model that analysed this photo (NULL = not yet); vector in content_vectors.
+  content_version INTEGER,
   -- 1 when at least one copy is currently on disk under the base folder.
   present INTEGER NOT NULL DEFAULT 0
 );
@@ -146,7 +149,7 @@ CREATE TABLE IF NOT EXISTS clock_corrections (
   offset_seconds INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-`
+${VECTOR_SCHEMA}`
 
 type Row = Record<string, unknown>
 type SqlValue = string | number | null
@@ -178,6 +181,19 @@ export interface ThumbSource {
   path: string
   ext: string
   orientation: number | null
+}
+
+/** A photo waiting for background analysis, and which analyses it still needs. */
+export interface AnalysisSource extends ThumbSource {
+  needsFaces: boolean
+  needsContent: boolean
+}
+
+/** A search's content part: the phrase's vector and what counts as a match (spec 0002). */
+export interface ContentQuery {
+  vector: Float32Array
+  version: number
+  minScore: number
 }
 
 export interface PhotoForOrganising {
@@ -219,12 +235,16 @@ function toPhoto(r: Row): Photo {
 export class LibraryDb {
   private db: DatabaseSync
   private correctionsCache: Correction[] | null = null
+  /** Content vectors (spec 0002). */
+  readonly vectors: VectorStore
 
   constructor(file: string) {
-    this.db = new DatabaseSync(file)
+    // Extensions are allowed only while the vector store loads sqlite-vec (ADR 0009).
+    this.db = new DatabaseSync(file, { allowExtension: true })
     this.db.exec('PRAGMA journal_mode = WAL;')
     this.migrate()
     this.db.exec('PRAGMA foreign_keys = ON;')
+    this.vectors = new VectorStore(this.db)
   }
 
   private migrate(): void {
@@ -242,6 +262,10 @@ export class LibraryDb {
         this.db.exec('ALTER TABLE photos ADD COLUMN faces_version INTEGER')
       }
       this.db.exec(SCHEMA)
+      // v4 -> v5: content analysis (spec 0002). Every present photo gets analysed.
+      if (!this.db.prepare("SELECT 1 FROM pragma_table_info('photos') WHERE name = 'content_version'").get()) {
+        this.db.exec('ALTER TABLE photos ADD COLUMN content_version INTEGER')
+      }
       if (v1) {
         // v1 had one row per file. Each becomes a photo (same id, so albums/tags still match)
         // with its file as a location. mtime 0 forces the next scan to fingerprint it; photos
@@ -342,8 +366,11 @@ export class LibraryDb {
         if (owner.hash === null || this.fileCount(owner.id as number) === 1) {
           photoId = owner.id as number
           this.db.prepare('UPDATE photos SET hash = ? WHERE id = ?').run(hash, photoId)
-          // New content: the faces found before may no longer match it.
-          if (owner.hash !== null) this.resetFaces(photoId)
+          // New content: the faces and content analysis from before may no longer match it.
+          if (owner.hash !== null) {
+            this.resetFaces(photoId)
+            this.resetContent(photoId)
+          }
           // A row upgraded from v1 getting its first fingerprint is not a move; count it as updated.
           outcome = 'updated'
         } else {
@@ -398,6 +425,10 @@ export class LibraryDb {
     if (!this.db.prepare('SELECT 1 FROM faces WHERE photo_id = ?').get(keepId)) {
       this.db.prepare('UPDATE faces SET photo_id = ? WHERE photo_id = ?').run(keepId, dropId)
       this.db.prepare('UPDATE photos SET faces_version = (SELECT faces_version FROM photos WHERE id = ?) WHERE id = ?').run(dropId, keepId)
+    }
+    if (!this.db.prepare('SELECT 1 FROM photos WHERE id = ? AND content_version IS NOT NULL').get(keepId)) {
+      this.db.prepare('UPDATE content_vectors SET photo_id = ? WHERE photo_id = ?').run(keepId, dropId)
+      this.db.prepare('UPDATE photos SET content_version = (SELECT content_version FROM photos WHERE id = ?) WHERE id = ?').run(dropId, keepId)
     }
     this.db.prepare('DELETE FROM photos WHERE id = ?').run(dropId)
   }
@@ -492,54 +523,65 @@ export class LibraryDb {
     return { id: r.id as number, hash: (r.hash as string) ?? null, path, ext: extname(path).toLowerCase(), orientation: (r.orientation as number) ?? null }
   }
 
-  queryPhotos(filter: PhotoFilter, eventPhotoIds?: number[]): PhotoPage {
-    const where: string[] = ['p.present = 1']
-    const params: SqlValue[] = []
+  /**
+   * Conditions on photos `p` for a view: `base` (present, dates, album, …), and `terms`, one per
+   * search word, each matching a folder/file name (below the base folder), an album, a tag or a person.
+   */
+  private photoConditions(filter: PhotoFilter, eventPhotoIds?: number[]): { base: string[]; baseParams: SqlValue[]; terms: string[]; termParams: SqlValue[] } {
+    const base: string[] = ['p.present = 1']
+    const baseParams: SqlValue[] = []
 
     const parsed = filter.text ? parseSearch(filter.text) : { terms: [] as string[] }
     const year = filter.year ?? parsed.year
     const month = filter.month ?? parsed.month
 
     if (year) {
-      where.push('substr(p.taken_at, 1, 4) = ?')
-      params.push(year)
+      base.push('substr(p.taken_at, 1, 4) = ?')
+      baseParams.push(year)
     }
     if (month) {
-      where.push('substr(p.taken_at, 6, 2) = ?')
-      params.push(month)
+      base.push('substr(p.taken_at, 6, 2) = ?')
+      baseParams.push(month)
     }
-    if (filter.undated) where.push('p.taken_at IS NULL')
-    if (filter.favorites) where.push('p.favorite = 1')
+    if (filter.undated) base.push('p.taken_at IS NULL')
+    if (filter.favorites) base.push('p.favorite = 1')
     if (filter.albumId != null) {
-      where.push('p.id IN (SELECT photo_id FROM album_photos WHERE album_id = ?)')
-      params.push(filter.albumId)
+      base.push('p.id IN (SELECT photo_id FROM album_photos WHERE album_id = ?)')
+      baseParams.push(filter.albumId)
     }
     if (filter.tagId != null) {
-      where.push('p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id = ?)')
-      params.push(filter.tagId)
+      base.push('p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id = ?)')
+      baseParams.push(filter.tagId)
     }
     if (filter.personId != null) {
-      where.push('p.id IN (SELECT photo_id FROM faces WHERE person_id = ?)')
-      params.push(filter.personId)
+      base.push('p.id IN (SELECT photo_id FROM faces WHERE person_id = ?)')
+      baseParams.push(filter.personId)
     }
     if (eventPhotoIds) {
-      where.push('p.id IN (SELECT value FROM json_each(?))')
-      params.push(JSON.stringify(eventPhotoIds))
+      base.push('p.id IN (SELECT value FROM json_each(?))')
+      baseParams.push(JSON.stringify(eventPhotoIds))
     }
-    // Each remaining word must match a folder/file name (below the base folder), an album, a tag or a person.
-    const base = this.getSetting('basePath') ?? ''
+    const terms: string[] = []
+    const termParams: SqlValue[] = []
+    const basePath = this.getSetting('basePath') ?? ''
     for (const term of parsed.terms) {
       const like = `%${term.replace(/[\\%_]/g, (c) => '\\' + c)}%`
-      where.push(`(
+      terms.push(`(
         p.id IN (SELECT photo_id FROM files WHERE missing = 0 AND substr(path, ?) LIKE ? ESCAPE '\\')
         OR p.id IN (SELECT ap.photo_id FROM album_photos ap JOIN albums a ON a.id = ap.album_id WHERE a.name LIKE ? ESCAPE '\\')
         OR p.id IN (SELECT pt.photo_id FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id WHERE t.name LIKE ? ESCAPE '\\')
         OR p.id IN (SELECT f.photo_id FROM faces f JOIN people pe ON pe.id = f.person_id WHERE pe.name LIKE ? ESCAPE '\\')
       )`)
-      params.push(base.length + 2, like, like, like, like)
+      termParams.push(basePath.length + 2, like, like, like, like)
     }
+    return { base, baseParams, terms, termParams }
+  }
 
-    const whereSql = where.join(' AND ')
+  /** The view's photos, newest first. For a search, these are its name matches (spec 0002). */
+  queryPhotos(filter: PhotoFilter, eventPhotoIds?: number[]): PhotoPage {
+    const c = this.photoConditions(filter, eventPhotoIds)
+    const whereSql = [...c.base, ...c.terms].join(' AND ')
+    const params = [...c.baseParams, ...c.termParams]
     const total = (this.db.prepare(`SELECT count(*) AS n FROM photos p WHERE ${whereSql}`).get(...params) as Row).n as number
     const rows = this.db
       .prepare(
@@ -548,6 +590,42 @@ export class LibraryDb {
       )
       .all(...params, filter.limit ?? 200, filter.offset ?? 0) as Row[]
     return { photos: rows.map(toPhoto), total }
+  }
+
+  /** Splits a search into dates, people and the content phrase, using the names of people in the library. */
+  searchPlan(text: string): SearchPlan {
+    const people = (this.db.prepare('SELECT id, name FROM people').all() as Row[]).map((r) => ({ id: r.id as number, name: r.name as string }))
+    return splitSearch(text, people)
+  }
+
+  /**
+   * A search's content matches (spec 0002): photos in the view, of every person named in the
+   * search, analysed by the current model and similar enough to the phrase, best first. Name
+   * matches (queryPhotos) are left out, so each photo is listed once.
+   */
+  contentMatches(filter: PhotoFilter, eventPhotoIds: number[] | undefined, plan: SearchPlan, content: ContentQuery): number[] {
+    const c = this.photoConditions(filter, eventPhotoIds)
+    const where = [...c.base, 'p.content_version = ?']
+    const params: SqlValue[] = [...c.baseParams, content.version]
+    for (const ids of plan.personIds) {
+      where.push('p.id IN (SELECT photo_id FROM faces WHERE person_id IN (SELECT value FROM json_each(?)))')
+      params.push(JSON.stringify(ids))
+    }
+    if (c.terms.length) {
+      where.push(`NOT (${c.terms.join(' AND ')})`)
+      params.push(...c.termParams)
+    }
+    return this.vectors.search(content.vector, content.minScore, where.join(' AND '), params).map((m) => m.id)
+  }
+
+  /** Present photos with these ids, in the given order. */
+  photosByIds(ids: number[]): Photo[] {
+    if (ids.length === 0) return []
+    const rows = this.db
+      .prepare(`SELECT ${PHOTO_COLUMNS} FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE} WHERE p.present = 1 AND p.id IN (SELECT value FROM json_each(?))`)
+      .all(JSON.stringify(ids)) as Row[]
+    const byId = new Map(rows.map((r) => [r.id as number, toPhoto(r)]))
+    return ids.flatMap((id) => byId.get(id) ?? [])
   }
 
   getPhoto(id: number): PhotoDetails | null {
@@ -629,27 +707,63 @@ export class LibraryDb {
     this.db.prepare('UPDATE photos SET faces_version = NULL WHERE id = ?').run(photoId)
   }
 
-  /** Present photos not yet analysed with this face model version, newest first. */
-  photosNeedingFaces(version: number, limit: number): ThumbSource[] {
+  faceProgress(version: number): { done: number; total: number } {
+    const r = this.db.prepare('SELECT count(*) AS total, sum(faces_version >= ?) AS done FROM photos WHERE present = 1').get(version) as Row
+    return { done: Number(r.done ?? 0), total: Number(r.total ?? 0) }
+  }
+
+  // --- content analysis (spec 0002) ---
+
+  private resetContent(photoId: number): void {
+    this.db.prepare('DELETE FROM content_vectors WHERE photo_id = ?').run(photoId)
+    this.db.prepare('UPDATE photos SET content_version = NULL WHERE id = ?').run(photoId)
+  }
+
+  /**
+   * Present photos that still need faces and/or content analysed with these versions (null:
+   * that analysis isn't running), newest first.
+   */
+  photosNeedingAnalysis(versions: { faces: number | null; content: number | null }, limit: number): AnalysisSource[] {
+    const faces = versions.faces === null ? '0' : '(p.faces_version IS NULL OR p.faces_version < ?)'
+    const content = versions.content === null ? '0' : 'p.content_version IS NOT ?'
+    const params = [versions.faces, versions.content].filter((v) => v !== null)
     const rows = this.db
       .prepare(
-        `SELECT p.id, p.hash, p.orientation, f.path FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE}
-         WHERE p.present = 1 AND (p.faces_version IS NULL OR p.faces_version < ?)
-         ORDER BY p.taken_at IS NULL, p.taken_at DESC LIMIT ?`
+        `SELECT * FROM (
+           SELECT p.id, p.hash, p.orientation, p.taken_at, f.path, ${faces} AS needs_faces, ${content} AS needs_content
+           FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE} WHERE p.present = 1
+         ) WHERE needs_faces OR needs_content
+         ORDER BY taken_at IS NULL, taken_at DESC, id LIMIT ?`
       )
-      .all(version, limit) as Row[]
+      .all(...params, limit) as Row[]
     return rows.map((r) => ({
       id: r.id as number,
       hash: (r.hash as string) ?? null,
       path: r.path as string,
       ext: extname(r.path as string).toLowerCase(),
-      orientation: (r.orientation as number) ?? null
+      orientation: (r.orientation as number) ?? null,
+      needsFaces: !!r.needs_faces,
+      needsContent: !!r.needs_content
     }))
   }
 
-  faceProgress(version: number): { done: number; total: number } {
-    const r = this.db.prepare('SELECT count(*) AS total, sum(faces_version >= ?) AS done FROM photos WHERE present = 1').get(version) as Row
+  /** Present photos analysed by this content model version, of all present photos. */
+  contentProgress(version: number): { done: number; total: number } {
+    const r = this.db.prepare('SELECT count(*) AS total, sum(content_version IS ?) AS done FROM photos WHERE present = 1').get(version) as Row
     return { done: Number(r.done ?? 0), total: Number(r.total ?? 0) }
+  }
+
+  /** True when a present photo was analysed by another content model version, i.e. an upgrade is under way. */
+  hasOtherContentVersion(version: number): boolean {
+    return !!this.db.prepare('SELECT 1 FROM photos WHERE present = 1 AND content_version IS NOT NULL AND content_version IS NOT ?').get(version)
+  }
+
+  /** Records a photo's content analysis; `vector` is null when the photo couldn't be read (it isn't retried). */
+  saveContent(photoId: number, vector: Float32Array | null, version: number): void {
+    this.transaction(() => {
+      this.vectors.save(photoId, vector)
+      this.db.prepare('UPDATE photos SET content_version = ? WHERE id = ?').run(version, photoId)
+    })
   }
 
   /** Replaces a photo's faces with a fresh analysis. Returns the new face ids, in order. */

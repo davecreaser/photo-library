@@ -78,10 +78,15 @@ jobs:
 
       - run: npm ci
 
+      # Headless runs refuse any tool not listed here (the first run stopped after 5 denials).
+      # Bash calls still go through .claude/hooks/block-dangerous-git.sh.
       - uses: anthropics/claude-code-action@v1
+        id: claude
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: --max-turns 400
+          claude_args: >-
+            --max-turns 400
+            --allowedTools "Bash,Read,Edit,MultiEdit,Write,Glob,Grep,Agent,Task,TodoWrite"
           prompt: |
             You are running this repository's /feature workflow headlessly, for GitHub issue #${{ github.event.issue.number }} ("${{ github.event.issue.title }}"), stage `${{ needs.route.outputs.stage }}`. Nobody can answer questions during this run: the owner reviews asynchronously on the issue.
 
@@ -104,10 +109,31 @@ jobs:
 
             Hard rules: never push to main, never force-push, never merge a PR. Photo safety rules in CLAUDE.md are absolute. Use generated photos only in tests. If something blocks you that only the owner can decide, post a comment on the issue explaining it and stop. End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>" and PR bodies with "🤖 Generated with [Claude Code](https://claude.com/claude-code)".
 
+      # Claude can exit "successfully" without doing the stage (e.g. when tools are refused).
+      # The stage is done only when its label is on the issue.
+      - name: Check the stage finished
+        id: check
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          case "$STAGE" in
+            spec|revise) want=spec-ready ;;
+            *) want=pr-ready ;;
+          esac
+          denials=$(jq -r '(if type == "array" then (map(select(.type == "result")) | last) else . end) | .permission_denials_count // 0' "$EXECUTION_FILE" 2>/dev/null || echo "?")
+          echo "Permission denials: $denials"
+          if ! gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx "$want"; then
+            echo "reason=it finished without adding \`$want\` ($denials permission denials)" >> "$GITHUB_OUTPUT"
+            echo "::error::Stage $STAGE finished without adding $want ($denials permission denials)"
+            exit 1
+          fi
+
       - name: Clear the building label
         if: always()
+        env:
+          REASON: ${{ steps.check.outputs.reason }}
         run: |
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels/building" >/dev/null 2>&1 || true
           if [ "${{ job.status }}" != "success" ]; then
-            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "🤖 The run stopped with status \`${{ job.status }}\`. [Run log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "🤖 The run stopped with status \`${{ job.status }}\`${REASON:+: $REASON}. [Run log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           fi

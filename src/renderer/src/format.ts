@@ -1,0 +1,32 @@
+export const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+export function monthName(month: string): string {
+  return MONTH_NAMES[Number(month) - 1] ?? month
+}
+
+// Capture times are naive local times ('YYYY-MM-DDTHH:MM:SS'); format them via UTC so
+// the viewer's own timezone never shifts them.
+function naive(iso: string): Date {
+  return new Date(iso.slice(0, 19) + 'Z')
+}
+
+export function formatDateTime(iso: string | null): string {
+  if (!iso) return 'Unknown date'
+  return naive(iso).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short', timeZone: 'UTC' })
+}
+
+export function formatDate(iso: string | null): string {
+  if (!iso) return 'Unknown date'
+  return naive(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+export function formatRange(start: string | null, end: string | null): string {
+  if (!start || !end) return 'Undated'
+  if (start.slice(0, 10) === end.slice(0, 10)) return formatDate(start)
+  return `${formatDate(start)} – ${formatDate(end)}`
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}

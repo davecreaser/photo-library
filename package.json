@@ -1,0 +1,33 @@
+{
+  "name": "photo-library",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local, read-only photo organiser with a virtual folder structure",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning 'test/**/*.test.ts'",
+    "postinstall": "node scripts/fetch-models.mjs",
+    "fetch-models": "node scripts/fetch-models.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.9.0",
+    "electron-vite": "6.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  },
+  "dependencies": {
+    "exifr": "7.1.3",
+    "onnxruntime-node": "1.30.0",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "sharp": "0.35.5"
+  }
+}

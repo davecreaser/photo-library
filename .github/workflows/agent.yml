@@ -8,6 +8,8 @@ name: Agent
 #   "approved, no spec"  -> small change: skip the spec gate and build straight away
 #   "revise: <changes>"  -> on a spec-ready issue: update the spec/design and post again
 #   "go"                 -> on a spec-ready issue: build, review, QA, open a PR, watch CI
+#   "update"             -> on a PR: merge main into its branch, resolve conflicts, check, watch CI
+#                           (several features can be in flight at once; whichever merges second needs this)
 # Only the repository owner's issues and comments do anything. The agent never merges or pushes to main.
 
 on:
@@ -18,9 +20,7 @@ on:
 
 jobs:
   route:
-    if: >-
-      !github.event.issue.pull_request &&
-      github.event.sender.login == github.repository_owner
+    if: github.event.sender.login == github.repository_owner
     runs-on: ubuntu-latest
     outputs:
       stage: ${{ steps.pick.outputs.stage }}
@@ -33,12 +33,15 @@ jobs:
           IDEA: ${{ contains(github.event.issue.labels.*.name, 'idea') }}
           SPEC_READY: ${{ contains(github.event.issue.labels.*.name, 'spec-ready') }}
           BUSY: ${{ contains(github.event.issue.labels.*.name, 'building') }}
+          IS_PR: ${{ github.event.issue.pull_request && 'true' || 'false' }}
         run: |
           first=$(printf '%s' "$BODY" | head -n1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
           stage=none
           if [ "$EVENT" = "issues" ]; then
-            if [ -z "$LABELS" ]; then stage=idea; fi
+            if [ -z "$LABELS" ] && [ "$IS_PR" != "true" ]; then stage=idea; fi
           elif [ "$BUSY" = "true" ]; then stage=none
+          elif [ "$IS_PR" = "true" ]; then
+            if printf '%s' "$first" | grep -qE '^update\b'; then stage=update; fi
           elif [ "$SPEC_READY" != "true" ] && printf '%s' "$first" | grep -qE '^idea\b'; then stage=idea
           elif [ "$IDEA" != "true" ]; then stage=none
           elif printf '%s' "$first" | grep -qE '^approved,? no spec'; then stage=build-direct
@@ -124,6 +127,8 @@ jobs:
 
             Spec numbers: the next number is one above the highest in docs/specs/ on main *and* on every remote `feat/*` branch (`git ls-remote origin 'refs/heads/feat/*'`). Other issues' specs may not be merged yet.
 
+            **update**: #${{ github.event.issue.number }} is a pull request, not an issue: read it with `gh pr view ${{ github.event.issue.number }} --comments` and its spec (linked in the body). Check out its branch and merge main into it (`git fetch origin` then `git merge origin/main`; never rebase, since that would need a force-push). Resolve every conflict so that both this PR's feature and what landed on main keep working. If main took the same `SCHEMA_VERSION` or spec number, move this PR's one up (renumber its migration, test, spec file and links). Then run `npm run typecheck && npm test && npm run e2e` and fix what broke. Push the branch as its own command (the git hook refuses a push in a command that mentions main), watch CI to green, and post a short comment on the PR saying what conflicted and how you resolved it. No review or QA pass unless resolving a conflict meant changing how the feature behaves.
+
             Hard rules: never push to main, never force-push, never merge a PR. Photo safety rules in CLAUDE.md are absolute. Use generated photos only in tests. If something blocks you that only the owner can decide, post a comment on the issue explaining it and stop. End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>" and PR bodies with "🤖 Generated with [Claude Code](https://claude.com/claude-code)".
 
       # Claude can exit "successfully" without doing the stage: tools refused, or it ended its
@@ -147,7 +152,7 @@ jobs:
             --max-turns 400
             --allowedTools "Bash,Read,Edit,MultiEdit,Write,Glob,Grep,Agent,Task,TodoWrite"
           prompt: |
-            You ended your reply before the `${{ needs.route.outputs.stage }}` stage was finished: ${{ steps.check1.outputs.reason }}. Nobody saw that reply. Check where things stand (git log, the branch, the issue, any PR) and carry on from there to the end of the stage, without repeating work that's already done. Don't stop until the label is on the issue, or until something blocks you that only the owner can decide, in which case post a comment on the issue explaining it.
+            You ended your reply before the `${{ needs.route.outputs.stage }}` stage was finished: ${{ steps.check1.outputs.reason }}. Nobody saw that reply. Check where things stand (git log, the branch, the issue, any PR) and carry on from there to the end of the stage, without repeating work that's already done. Don't stop until the stage is finished (its label is on the issue; for update, main is merged into the PR's branch and pushed), or until something blocks you that only the owner can decide, in which case post a comment on the issue explaining it.
 
       - name: Check the stage finished (after continuing)
         id: check

@@ -3,7 +3,16 @@ import type { Album } from '../../../shared/types.ts'
 import { InlineInput } from './InlineInput.tsx'
 
 /** Dropdown list of albums (indented by nesting) plus a "new album" entry. */
-export function AlbumPicker(props: { albums: Album[]; exclude?: number[]; onPick: (albumId: number) => void; onClose: () => void }) {
+export function AlbumPicker(props: {
+  albums: Album[]
+  exclude?: number[]
+  /** Adds a "Top level" entry first (for moving an album out). */
+  onTopLevel?: () => void
+  /** Hides the "new album" entry. */
+  noNew?: boolean
+  onPick: (albumId: number) => void
+  onClose: () => void
+}) {
   const [creating, setCreating] = useState(false)
 
   const ordered: { album: Album; depth: number }[] = []
@@ -18,6 +27,11 @@ export function AlbumPicker(props: { albums: Album[]; exclude?: number[]; onPick
 
   return (
     <div className="popover" onMouseLeave={creating ? undefined : props.onClose}>
+      {props.onTopLevel && (
+        <div className="popover-item" onClick={props.onTopLevel}>
+          Top level
+        </div>
+      )}
       {ordered
         .filter(({ album }) => !props.exclude?.includes(album.id))
         .map(({ album, depth }) => (
@@ -25,7 +39,7 @@ export function AlbumPicker(props: { albums: Album[]; exclude?: number[]; onPick
             📁 {album.name}
           </div>
         ))}
-      {creating ? (
+      {props.noNew ? null : creating ? (
         <InlineInput
           placeholder="New album name"
           onSubmit={async (name) => props.onPick((await window.api.createAlbum(name, null)).id)}

@@ -980,3 +980,8 @@ button.primary-small {
 .empty p {
   margin: 0 0 6px;
 }
+.nav-item.drop-target,
+.sidebar h2.drop-target {
+  outline: 2px solid var(--accent, #4a8cff);
+  outline-offset: -2px;
+}

@@ -1083,9 +1083,26 @@ export class LibraryDb {
     this.db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, id)
   }
 
-  /** Deletes the album record and its sub-albums. Photos themselves are untouched. */
+  /** Moves an album under `parentId` (null = top level). Refuses itself, its descendants and unknown targets. */
+  moveAlbum(id: number, parentId: number | null): boolean {
+    if (parentId != null) {
+      if (!this.db.prepare('SELECT 1 FROM albums WHERE id = ?').get(parentId)) return false
+      // Walk up from the target: meeting `id` means the target is inside the album.
+      for (let at: number | null = parentId; at != null;) {
+        if (at === id) return false
+        at = ((this.db.prepare('SELECT parent_id FROM albums WHERE id = ?').get(at) as Row | undefined)?.parent_id as number | null) ?? null
+      }
+    }
+    this.db.prepare('UPDATE albums SET parent_id = ? WHERE id = ?').run(parentId, id)
+    return true
+  }
+
+  /** Deletes the album record; its sub-albums move up one level. Photos themselves are untouched. */
   deleteAlbum(id: number): void {
-    this.db.prepare('DELETE FROM albums WHERE id = ?').run(id)
+    this.transaction(() => {
+      this.db.prepare('UPDATE albums SET parent_id = (SELECT parent_id FROM albums WHERE id = ?) WHERE parent_id = ?').run(id, id)
+      this.db.prepare('DELETE FROM albums WHERE id = ?').run(id)
+    })
   }
 
   addToAlbum(albumId: number, photoIds: number[]): void {

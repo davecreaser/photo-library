@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Album, FaceProgress, LibraryInfo, Person, Tag, TimelineMonth } from '../../../shared/types.ts'
 import type { View } from '../App.tsx'
 import { monthName } from '../format.ts'
+import { AlbumPicker } from './AlbumPicker.tsx'
 import { InlineInput } from './InlineInput.tsx'
 
 interface Props {
@@ -44,6 +45,33 @@ export function Sidebar({
   const [renaming, setRenaming] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
   const [confirmForget, setConfirmForget] = useState(false)
+  // Album being dragged, the drop target under the pointer ('top' = the Albums heading), and the album whose "Move to…" is open.
+  const [dragging, setDragging] = useState<number | null>(null)
+  const [dropOn, setDropOn] = useState<number | 'top' | null>(null)
+  const [moving, setMoving] = useState<number | null>(null)
+
+  /** The album and everything inside it. */
+  const withDescendants = (id: number): number[] => [id, ...albums.filter((a) => a.parentId === id).flatMap((a) => withDescendants(a.id))]
+  const canDrop = (target: number | null) =>
+    dragging != null && !(target != null && withDescendants(dragging).includes(target)) && albums.find((a) => a.id === dragging)?.parentId !== target
+  async function moveAlbum(id: number, target: number | null) {
+    setDragging(null)
+    setDropOn(null)
+    setMoving(null)
+    if (await api.moveAlbum(id, target)) onAlbumsChanged()
+  }
+  const dropProps = (target: number | null) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!canDrop(target)) return
+      e.preventDefault()
+      setDropOn(target ?? 'top')
+    },
+    onDragLeave: () => setDropOn((d) => (d === (target ?? 'top') ? null : d)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      if (dragging != null && canDrop(target)) void moveAlbum(dragging, target)
+    }
+  })
 
   const years = [...new Set(timeline.map((t) => t.year))]
   const yearCount = (y: string) => timeline.filter((t) => t.year === y).reduce((n, t) => n + t.count, 0)
@@ -76,7 +104,10 @@ export function Sidebar({
             ) : confirmDelete === a.id ? (
               <div className="confirm" style={{ paddingLeft: 12 + depth * 14 }}>
                 <span>
-                  Delete album “{a.name}”? Photos stay on disk{a.fromSuggestion ? ', and it goes back to Suggested albums' : ''}.
+                  Delete album “{a.name}”?{' '}
+                  {albums.some((c) => c.parentId === a.id) &&
+                    `Its ${albums.filter((c) => c.parentId === a.id).length === 1 ? 'sub-album moves' : 'sub-albums move'} up one level. `}
+                  Photos stay on disk{a.fromSuggestion ? ', and it goes back to Suggested albums' : ''}.
                 </span>
                 <button
                   className="danger"
@@ -93,7 +124,17 @@ export function Sidebar({
               </div>
             ) : (
               <div
-                className={`nav-item album ${isActive({ kind: 'album', id: a.id }) ? 'active' : ''}`}
+                className={`nav-item album ${isActive({ kind: 'album', id: a.id }) ? 'active' : ''} ${dropOn === a.id ? 'drop-target' : ''}`}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move'
+                  setDragging(a.id)
+                }}
+                onDragEnd={() => {
+                  setDragging(null)
+                  setDropOn(null)
+                }}
+                {...dropProps(a.id)}
                 style={{ paddingLeft: 12 + depth * 14 }}
                 onClick={() => onNavigate({ kind: 'album', id: a.id })}
               >
@@ -103,6 +144,9 @@ export function Sidebar({
                   <button title="New sub-album" onClick={() => setCreatingUnder(a.id)}>
                     ＋
                   </button>
+                  <button title="Move to…" onClick={() => setMoving(a.id)}>
+                    ⇥
+                  </button>
                   <button title="Rename" onClick={() => setRenaming(a.id)}>
                     ✎
                   </button>
@@ -110,6 +154,18 @@ export function Sidebar({
                     ✕
                   </button>
                 </span>
+              </div>
+            )}
+            {moving === a.id && (
+              <div className="popover-anchor">
+                <AlbumPicker
+                  albums={albums}
+                  exclude={withDescendants(a.id)}
+                  onTopLevel={a.parentId != null ? () => void moveAlbum(a.id, null) : undefined}
+                  noNew
+                  onPick={(target) => void moveAlbum(a.id, target)}
+                  onClose={() => setMoving(null)}
+                />
               </div>
             )}
             {renderAlbums(a.id, depth + 1)}
@@ -169,7 +225,7 @@ export function Sidebar({
       </section>
 
       <section>
-        <h2>
+        <h2 className={dropOn === 'top' ? 'drop-target' : ''} {...dropProps(null)}>
           Albums
           <button title="New album" onClick={() => setCreatingUnder(null)}>
             ＋

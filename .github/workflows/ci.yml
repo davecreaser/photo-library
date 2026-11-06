@@ -1,11 +1,9 @@
 name: CI
 
 on:
+  # Every pushed commit on every branch, once. PRs show these checks (they attach to the commit),
+  # so there's no separate pull_request trigger running the same tests twice.
   push:
-    # Feature branches too: commits pushed by the headless agent get checked even when the
-    # PR itself was opened with a token that doesn't trigger workflows.
-    branches: [main, 'feat/**']
-  pull_request:
   workflow_dispatch: # run by hand (e.g. macOS on a PR): Actions → CI → Run workflow
 
 concurrency:

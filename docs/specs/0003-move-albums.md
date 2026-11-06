@@ -1,6 +1,6 @@
 # 0003: Move albums into other albums
 
-Status: approved
+Status: done
 Issue: #42
 
 ## Problem

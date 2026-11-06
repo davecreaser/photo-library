@@ -106,7 +106,10 @@ export function Sidebar({
                 <span>
                   Delete album “{a.name}”?{' '}
                   {albums.some((c) => c.parentId === a.id) &&
-                    `Its ${albums.filter((c) => c.parentId === a.id).length === 1 ? 'sub-album moves' : 'sub-albums move'} up one level. `}
+                    (() => {
+                      const n = albums.filter((c) => c.parentId === a.id).length
+                      return n === 1 ? 'Its sub-album moves up one level. ' : `Its ${n} sub-albums move up one level. `
+                    })()}
                   Photos stay on disk{a.fromSuggestion ? ', and it goes back to Suggested albums' : ''}.
                 </span>
                 <button

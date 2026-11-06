@@ -587,3 +587,39 @@ test('albums move into other albums by drag and by “Move to…”; deleting a 
   await expect(album('Trips')).toHaveCount(0)
   await expect.poll(() => indent('Poland')).toBe(12)
 })
+
+test('albums move: dropping an album into its own sub-album is refused; moving keeps photos and sub-albums (AC-4, AC-5)', async () => {
+  await chooseLibrary()
+  const parent = await page.evaluate(() => window.api.createAlbum('Outer', null))
+  const child = await page.evaluate((p) => window.api.createAlbum('Inner', p), parent.id)
+  const dest = await page.evaluate(() => window.api.createAlbum('Dest', null))
+  const photos = await page.evaluate(() => window.api.queryPhotos({} as never))
+  const ids = photos.photos.slice(0, 2).map((p: { id: number }) => p.id)
+  expect(ids.length).toBe(2)
+  await page.evaluate(([a, i]) => window.api.addToAlbum(a as number, i as number[]), [parent.id, ids] as const)
+  await page.reload()
+  const album = (name: string) => page.locator('.sidebar .nav-item.album', { hasText: name })
+  const indent = async (name: string) => (await album(name).evaluate((el) => parseInt((el as HTMLElement).style.paddingLeft))) as number
+  await expect(album('Inner')).toBeVisible()
+
+  // UI: Outer onto its own sub-album does nothing; the picker for Outer excludes Inner.
+  await album('Outer').dragTo(album('Inner'))
+  expect(await indent('Outer')).toBe(12)
+  expect(await indent('Inner')).toBe(26)
+  await album('Outer').hover()
+  await album('Outer').getByTitle('Move to…').click()
+  await expect(page.locator('.popover-item', { hasText: 'Inner' })).toHaveCount(0)
+  await expect(page.locator('.popover-item', { hasText: 'Dest' })).toHaveCount(1)
+  // Data layer: refused, nothing changes.
+  expect(await page.evaluate((a) => window.api.moveAlbum(a[0], a[1]), [parent.id, child.id])).toBe(false)
+  expect(await page.evaluate((a) => window.api.moveAlbum(a, a), parent.id)).toBe(false)
+
+  // Moving Outer into Dest keeps its photos and its sub-album.
+  await page.locator('.popover-item', { hasText: 'Dest' }).click()
+  await expect.poll(() => indent('Outer')).toBe(26)
+  const after = await page.evaluate(() => window.api.listAlbums())
+  expect(after.find((a) => a.id === parent.id)?.photoCount).toBe(2)
+  expect(after.find((a) => a.id === parent.id)?.parentId).toBe(dest.id)
+  expect(after.find((a) => a.id === child.id)?.parentId).toBe(parent.id)
+  // afterAll's fingerprint check proves no photo file was touched.
+})

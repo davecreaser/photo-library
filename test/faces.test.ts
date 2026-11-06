@@ -61,13 +61,19 @@ test('similarity transform recovers rotation, scale and shift', () => {
 
 test('alignment maps landmarks onto the template', () => {
   // A 200x200 image with one bright pixel at the left-eye landmark: it should land near (38, 52).
-  const W = 200, H = 200
+  const W = 200,
+    H = 200
   const img = Buffer.alloc(W * H * 3)
   const kps = [80, 90, 120, 90, 100, 110, 85, 130, 115, 130]
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) img[((90 + dy) * W + 80 + dx) * 3] = 255
   const out = alignFace(img, W, H, kps)
-  let best = 0, at = 0
-  for (let i = 0; i < 112 * 112; i++) if (out[i * 3] > best) { best = out[i * 3]; at = i }
+  let best = 0,
+    at = 0
+  for (let i = 0; i < 112 * 112; i++)
+    if (out[i * 3] > best) {
+      best = out[i * 3]
+      at = i
+    }
   const [x, y] = [at % 112, Math.floor(at / 112)]
   assert.ok(Math.abs(x - 38) <= 2 && Math.abs(y - 52) <= 2, `bright pixel at ${x},${y}`)
 })
@@ -75,15 +81,25 @@ test('alignment maps landmarks onto the template', () => {
 test('YuNet decoding and NMS', () => {
   // One confident anchor at stride 32, cell (row 2, col 3), box centred in the cell, 2x2 cells big.
   const cells = (640 / 32) ** 2
-  const cls = new Float32Array(cells), obj = new Float32Array(cells), bbox = new Float32Array(cells * 4), kps = new Float32Array(cells * 10)
+  const cls = new Float32Array(cells),
+    obj = new Float32Array(cells),
+    bbox = new Float32Array(cells * 4),
+    kps = new Float32Array(cells * 10)
   const i = 2 * 20 + 3
-  cls[i] = 0.95; obj[i] = 0.95
+  cls[i] = 0.95
+  obj[i] = 0.95
   bbox.set([0.5, 0.5, Math.log(2), Math.log(2)], i * 4)
   const [d, ...rest] = decodeYuNet(cls, obj, bbox, kps, 32, 640, 0.8)
   assert.equal(rest.length, 0)
-  assert.deepEqual([d.x1, d.y1, d.x2, d.y2].map((v) => Math.round(v * 1000) / 1000), [3.5 * 32 - 32, 2.5 * 32 - 32, 3.5 * 32 + 32, 2.5 * 32 + 32])
+  assert.deepEqual(
+    [d.x1, d.y1, d.x2, d.y2].map((v) => Math.round(v * 1000) / 1000),
+    [3.5 * 32 - 32, 2.5 * 32 - 32, 3.5 * 32 + 32, 2.5 * 32 + 32]
+  )
   assert.ok(Math.abs(d.score - 0.95) < 1e-6)
   const dup = { ...d, x1: d.x1 + 2, score: 0.85 }
   const other = { ...d, x1: 400, x2: 460, score: 0.9 }
-  assert.deepEqual(nms([dup, d, other], 0.3).map((x) => x.score), [d.score, 0.9])
+  assert.deepEqual(
+    nms([dup, d, other], 0.3).map((x) => x.score),
+    [d.score, 0.9]
+  )
 })

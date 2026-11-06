@@ -36,7 +36,11 @@ export function EventsView({ events, onOpen, onMerge }: Props) {
             <InlineInput
               initial={suggestedName}
               placeholder="Name, e.g. Norway"
-              onSubmit={(name) => { onMerge(selected, name); setSelected([]); setNaming(false) }}
+              onSubmit={(name) => {
+                onMerge(selected, name)
+                setSelected([])
+                setNaming(false)
+              }}
               onCancel={() => setNaming(false)}
             />
           ) : (
@@ -44,7 +48,14 @@ export function EventsView({ events, onOpen, onMerge }: Props) {
               Merge into one trip
             </button>
           )}
-          <button onClick={() => { setSelected([]); setNaming(false) }}>Clear</button>
+          <button
+            onClick={() => {
+              setSelected([])
+              setNaming(false)
+            }}
+          >
+            Clear
+          </button>
           {selected.length < 2 && <span className="hint">Select another event to merge with.</span>}
         </div>
       ) : (
@@ -63,7 +74,15 @@ export function EventsView({ events, onOpen, onMerge }: Props) {
                 onClick={(ev) => (ev.metaKey || ev.ctrlKey || selected.length > 0 ? toggle(e.id) : onOpen(e.id))}
               >
                 <img src={`photo://thumb/${e.coverId}`} loading="lazy" alt="" />
-                <span className="check" onClick={(ev) => { ev.stopPropagation(); toggle(e.id) }}>{selected.includes(e.id) ? '✓' : ''}</span>
+                <span
+                  className="check"
+                  onClick={(ev) => {
+                    ev.stopPropagation()
+                    toggle(e.id)
+                  }}
+                >
+                  {selected.includes(e.id) ? '✓' : ''}
+                </span>
                 <div className="event-info">
                   <div className={`event-name ${e.named ? '' : 'dated'}`}>{e.name}</div>
                   <div className="event-meta">

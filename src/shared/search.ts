@@ -9,28 +9,41 @@ export interface ParsedSearch {
 }
 
 const MONTHS: Record<string, string> = {
-  january: '01', jan: '01',
-  february: '02', feb: '02',
-  march: '03', mar: '03',
-  april: '04', apr: '04',
+  january: '01',
+  jan: '01',
+  february: '02',
+  feb: '02',
+  march: '03',
+  mar: '03',
+  april: '04',
+  apr: '04',
   may: '05',
-  june: '06', jun: '06',
-  july: '07', jul: '07',
-  august: '08', aug: '08',
-  september: '09', sep: '09', sept: '09',
-  october: '10', oct: '10',
-  november: '11', nov: '11',
-  december: '12', dec: '12'
+  june: '06',
+  jun: '06',
+  july: '07',
+  jul: '07',
+  august: '08',
+  aug: '08',
+  september: '09',
+  sep: '09',
+  sept: '09',
+  october: '10',
+  oct: '10',
+  november: '11',
+  nov: '11',
+  december: '12',
+  dec: '12'
 }
 
 // Filler words in queries like "show me photos of jake from august 2020".
-const STOP_WORDS = new Set([
-  'show', 'me', 'all', 'the', 'photos', 'photo', 'pictures', 'pics', 'of', 'from', 'in', 'on', 'at', 'our', 'my', 'a', 'and', 'with'
-])
+const STOP_WORDS = new Set(['show', 'me', 'all', 'the', 'photos', 'photo', 'pictures', 'pics', 'of', 'from', 'in', 'on', 'at', 'our', 'my', 'a', 'and', 'with'])
 
 export function parseSearch(input: string): ParsedSearch {
   const result: ParsedSearch = { terms: [] }
-  const words = input.toLowerCase().split(/[\s,]+/).filter(Boolean)
+  const words = input
+    .toLowerCase()
+    .split(/[\s,]+/)
+    .filter(Boolean)
 
   for (const word of words) {
     const isoMonth = /^(\d{4})-(\d{1,2})$/.exec(word)

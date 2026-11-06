@@ -49,9 +49,7 @@ export function CorrectionsDialog({ onClose, onChanged }: { onClose: () => void;
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Camera date corrections</h2>
-        <p className="hint">
-          Fix photos from a camera whose clock was wrong. Only the dates shown in Photo Library change; your photo files are never edited.
-        </p>
+        <p className="hint">Fix photos from a camera whose clock was wrong. Only the dates shown in Photo Library change; your photo files are never edited.</p>
 
         {list.length === 0 && <p className="hint">No corrections yet.</p>}
         {list.map((c) => (
@@ -60,7 +58,15 @@ export function CorrectionsDialog({ onClose, onChanged }: { onClose: () => void;
               <strong>{c.camera}</strong>: {describe(c)}
               {c.appliesBefore ? `, for photos the camera dated before ${formatDate(c.appliesBefore)}` : ', all photos'} · {c.photoCount} photos
             </span>
-            <button onClick={async () => { await api.removeClockCorrection(c.id); await load(); onChanged() }}>Undo</button>
+            <button
+              onClick={async () => {
+                await api.removeClockCorrection(c.id)
+                await load()
+                onChanged()
+              }}
+            >
+              Undo
+            </button>
           </div>
         ))}
 
@@ -69,7 +75,9 @@ export function CorrectionsDialog({ onClose, onChanged }: { onClose: () => void;
           <label>
             Camera
             <select value={camera} onChange={(e) => setCamera(e.target.value)}>
-              {cameras.map((c) => <option key={c}>{c}</option>)}
+              {cameras.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
             </select>
           </label>
           <label>
@@ -78,7 +86,13 @@ export function CorrectionsDialog({ onClose, onChanged }: { onClose: () => void;
           </label>
           <label>
             Shift hours
-            <input type="number" step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} title="e.g. -1 if the camera wasn't switched to summer time" />
+            <input
+              type="number"
+              step="0.5"
+              value={hours}
+              onChange={(e) => setHours(e.target.value)}
+              title="e.g. -1 if the camera wasn't switched to summer time"
+            />
           </label>
           <label>
             Only before (camera date)

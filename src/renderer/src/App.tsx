@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Album, ClockSuggestion, FaceProgress, LibraryInfo, Person, Photo, PhotoEvent, PhotoFilter, ScanProgress, Tag, TimelineMonth } from '../../shared/types.ts'
+import type {
+  Album,
+  ClockSuggestion,
+  FaceProgress,
+  LibraryInfo,
+  Person,
+  Photo,
+  PhotoEvent,
+  PhotoFilter,
+  ScanProgress,
+  Tag,
+  TimelineMonth
+} from '../../shared/types.ts'
 import { Sidebar } from './components/Sidebar.tsx'
 import { PhotoGrid } from './components/PhotoGrid.tsx'
 import { Viewer } from './components/Viewer.tsx'
@@ -56,7 +68,13 @@ export function App() {
 
   const refreshSidebar = useCallback(async () => {
     const [lib, a, t, tl, ev, s, pe] = await Promise.all([
-      api.getLibrary(), api.listAlbums(), api.listTags(), api.getTimeline(), api.getEvents(), api.getClockSuggestions(), api.getPeople()
+      api.getLibrary(),
+      api.listAlbums(),
+      api.listTags(),
+      api.getTimeline(),
+      api.getEvents(),
+      api.getClockSuggestions(),
+      api.getPeople()
     ])
     setPeople(pe)
     setLibrary(lib)
@@ -117,16 +135,28 @@ export function App() {
 
   const filter: PhotoFilter = useMemo(() => {
     switch (view.kind) {
-      case 'all': case 'events': case 'people': return {}
-      case 'person': return { personId: view.id }
-      case 'favorites': return { favorites: true }
-      case 'event': return { eventId: view.id }
-      case 'undated': return { undated: true }
-      case 'year': return { year: view.year }
-      case 'month': return { year: view.year, month: view.month }
-      case 'album': return { albumId: view.id }
-      case 'tag': return { tagId: view.id }
-      case 'search': return { text: view.text }
+      case 'all':
+      case 'events':
+      case 'people':
+        return {}
+      case 'person':
+        return { personId: view.id }
+      case 'favorites':
+        return { favorites: true }
+      case 'event':
+        return { eventId: view.id }
+      case 'undated':
+        return { undated: true }
+      case 'year':
+        return { year: view.year }
+      case 'month':
+        return { year: view.year, month: view.month }
+      case 'album':
+        return { albumId: view.id }
+      case 'tag':
+        return { tagId: view.id }
+      case 'search':
+        return { text: view.text }
     }
   }, [view])
 
@@ -135,24 +165,43 @@ export function App() {
 
   const title = (() => {
     switch (view.kind) {
-      case 'all': return 'All photos'
-      case 'favorites': return 'Favourites'
-      case 'events': return 'Events & trips'
-      case 'event': return currentEvent?.name ?? 'Event'
-      case 'undated': return 'Undated'
-      case 'people': return 'People'
-      case 'person': return currentPerson?.name ?? 'Person'
-      case 'year': return view.year
-      case 'month': return `${monthName(view.month)} ${view.year}`
-      case 'album': return albums.find((a) => a.id === view.id)?.name ?? 'Album'
-      case 'tag': return `#${tags.find((t) => t.id === view.id)?.name ?? 'tag'}`
-      case 'search': return `“${view.text}”`
+      case 'all':
+        return 'All photos'
+      case 'favorites':
+        return 'Favourites'
+      case 'events':
+        return 'Events & trips'
+      case 'event':
+        return currentEvent?.name ?? 'Event'
+      case 'undated':
+        return 'Undated'
+      case 'people':
+        return 'People'
+      case 'person':
+        return currentPerson?.name ?? 'Person'
+      case 'year':
+        return view.year
+      case 'month':
+        return `${monthName(view.month)} ${view.year}`
+      case 'album':
+        return albums.find((a) => a.id === view.id)?.name ?? 'Album'
+      case 'tag':
+        return `#${tags.find((t) => t.id === view.id)?.name ?? 'tag'}`
+      case 'search':
+        return `“${view.text}”`
     }
   })()
 
   if (!library) return null
   if (!library.basePath) {
-    return <Welcome onChoose={async () => { const lib = await api.chooseBaseFolder(); if (lib) setLibrary(lib) }} />
+    return (
+      <Welcome
+        onChoose={async () => {
+          const lib = await api.chooseBaseFolder()
+          if (lib) setLibrary(lib)
+        }}
+      />
+    )
   }
 
   const scanning = scan?.phase === 'indexing'
@@ -184,7 +233,9 @@ export function App() {
           ) : (
             <span>{library.photoCount.toLocaleString()} photos</span>
           )}
-          <button disabled={scanning} onClick={() => api.startScan()} title="Look for new, moved or changed photos">Rescan</button>
+          <button disabled={scanning} onClick={() => api.startScan()} title="Look for new, moved or changed photos">
+            Rescan
+          </button>
         </div>
       </header>
 
@@ -198,7 +249,13 @@ export function App() {
         people={people}
         faceProgress={faceProgress}
         onNavigate={navigate}
-        onChangeBase={async () => { const lib = await api.chooseBaseFolder(); if (lib) { setLibrary(lib); refreshAll() } }}
+        onChangeBase={async () => {
+          const lib = await api.chooseBaseFolder()
+          if (lib) {
+            setLibrary(lib)
+            refreshAll()
+          }
+        }}
         onAlbumsChanged={refreshAll}
         onShowCorrections={() => setShowCorrections(true)}
         onShowIgnored={() => setShowIgnored(true)}
@@ -209,8 +266,14 @@ export function App() {
           <ClockBanner
             key={s.key}
             suggestion={s}
-            onApply={async () => { await api.applyClockSuggestion(s.key); refreshAll() }}
-            onDismiss={async () => { await api.dismissClockSuggestion(s.key); refreshAll() }}
+            onApply={async () => {
+              await api.applyClockSuggestion(s.key)
+              refreshAll()
+            }}
+            onDismiss={async () => {
+              await api.dismissClockSuggestion(s.key)
+              refreshAll()
+            }}
           />
         ))}
 
@@ -219,27 +282,44 @@ export function App() {
             <h1>{title}</h1>
             {currentEvent && <div className="subtitle">{formatRange(currentEvent.start, currentEvent.end)}</div>}
           </div>
-          {currentPerson && view.kind === 'person' && selected.size === 0 && (
-            renamingPerson ? (
+          {currentPerson &&
+            view.kind === 'person' &&
+            selected.size === 0 &&
+            (renamingPerson ? (
               <InlineInput
                 initial={currentPerson.name}
-                onSubmit={async (name) => { await api.renamePerson(currentPerson.id, name); setRenamingPerson(false); refreshAll(); navigate({ kind: 'people' }) }}
+                onSubmit={async (name) => {
+                  await api.renamePerson(currentPerson.id, name)
+                  setRenamingPerson(false)
+                  refreshAll()
+                  navigate({ kind: 'people' })
+                }}
                 onCancel={() => setRenamingPerson(false)}
               />
             ) : confirmForgetPerson ? (
               <div className="header-actions">
                 <span className="hint">Forget the name “{currentPerson.name}”? Their faces become unnamed again; photos are not touched.</span>
-                <button className="danger" onClick={async () => { await api.deletePerson(currentPerson.id); refreshAll(); navigate({ kind: 'people' }) }}>Forget</button>
+                <button
+                  className="danger"
+                  onClick={async () => {
+                    await api.deletePerson(currentPerson.id)
+                    refreshAll()
+                    navigate({ kind: 'people' })
+                  }}
+                >
+                  Forget
+                </button>
                 <button onClick={() => setConfirmForgetPerson(false)}>Cancel</button>
               </div>
             ) : (
               <div className="header-actions">
                 <button onClick={() => setView({ ...view, reviewing: !view.reviewing })}>{view.reviewing ? 'Show photos' : 'Check faces'}</button>
-                <button onClick={() => setRenamingPerson(true)} title="Renaming to someone else’s name merges them">Rename</button>
+                <button onClick={() => setRenamingPerson(true)} title="Renaming to someone else’s name merges them">
+                  Rename
+                </button>
                 <button onClick={() => setConfirmForgetPerson(true)}>Forget name…</button>
               </div>
-            )
-          )}
+            ))}
           {currentEvent && renamingEvent && (
             <InlineInput
               initial={currentEvent.name}
@@ -258,12 +338,18 @@ export function App() {
               {currentEvent.custom && (
                 <button
                   title="Split back into the automatically detected events"
-                  onClick={async () => { await api.ungroupEvent(currentEvent.id); await refreshSidebar(); navigate({ kind: 'events' }) }}
+                  onClick={async () => {
+                    await api.ungroupEvent(currentEvent.id)
+                    await refreshSidebar()
+                    navigate({ kind: 'events' })
+                  }}
                 >
                   Undo merge/rename
                 </button>
               )}
-              <button onClick={() => setSavingEvent(true)} title="Keep this event as a permanent album">Save as album</button>
+              <button onClick={() => setSavingEvent(true)} title="Keep this event as a permanent album">
+                Save as album
+              </button>
             </div>
           )}
           {currentEvent && savingEvent && (
@@ -284,14 +370,23 @@ export function App() {
               albums={albums}
               tags={tags}
               currentAlbumId={view.kind === 'album' ? view.id : null}
-              onDone={(clear) => { if (clear) setSelected(new Set()); refreshAll() }}
+              onDone={(clear) => {
+                if (clear) setSelected(new Set())
+                refreshAll()
+              }}
               onClear={() => setSelected(new Set())}
             />
           )}
         </div>
 
         {view.kind === 'people' ? (
-          <PeopleView people={people} progress={faceProgress} version={version} onOpenPerson={(id) => navigate({ kind: 'person', id })} onChanged={refreshAll} />
+          <PeopleView
+            people={people}
+            progress={faceProgress}
+            version={version}
+            onOpenPerson={(id) => navigate({ kind: 'person', id })}
+            onChanged={refreshAll}
+          />
         ) : view.kind === 'person' && view.reviewing && currentPerson ? (
           <PersonFaces person={currentPerson} onChanged={refreshAll} />
         ) : view.kind === 'events' ? (
@@ -305,14 +400,7 @@ export function App() {
             }}
           />
         ) : (
-          <PhotoGrid
-            filter={filter}
-            version={version}
-            selected={selected}
-            onSelectionChange={setSelected}
-            onPhotosLoaded={setPhotos}
-            onOpen={setViewerIndex}
-          />
+          <PhotoGrid filter={filter} version={version} selected={selected} onSelectionChange={setSelected} onPhotosLoaded={setPhotos} onOpen={setViewerIndex} />
         )}
       </main>
 

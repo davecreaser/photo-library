@@ -32,8 +32,8 @@ export function IgnoredFoldersDialog({ onClose, onChanged }: { onClose: () => vo
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Ignored folders</h2>
         <p className="hint">
-          Photo Library skips these folders entirely. Your files are never touched. Photos already in the library from a newly ignored folder are
-          forgotten by the app, including their faces, names and tags. Remove a rule and they come back on the next scan.
+          Photo Library skips these folders entirely. Your files are never touched. Photos already in the library from a newly ignored folder are forgotten by
+          the app, including their faces, names and tags. Remove a rule and they come back on the next scan.
         </p>
 
         {rules.length === 0 && <p className="hint">Nothing is ignored.</p>}
@@ -41,9 +41,13 @@ export function IgnoredFoldersDialog({ onClose, onChanged }: { onClose: () => vo
           <div key={r} className="correction">
             <span>
               {isPath(r) ? (
-                <>The folder <strong>{r}</strong> and everything in it</>
+                <>
+                  The folder <strong>{r}</strong> and everything in it
+                </>
               ) : (
-                <>Any folder named <strong>{r}</strong>, anywhere</>
+                <>
+                  Any folder named <strong>{r}</strong>, anywhere
+                </>
               )}
               {added.includes(r) && <span className="hint"> (new)</span>}
             </span>
@@ -67,9 +71,24 @@ export function IgnoredFoldersDialog({ onClose, onChanged }: { onClose: () => vo
               }}
             />
           </label>
-          <button onClick={() => { add(name); setName('') }} disabled={!name.trim()}>Add name</button>
+          <button
+            onClick={() => {
+              add(name)
+              setName('')
+            }}
+            disabled={!name.trim()}
+          >
+            Add name
+          </button>
           <span className="hint">or</span>
-          <button onClick={async () => { const rel = await api.chooseIgnoredFolder(); if (rel) add(rel) }}>Choose a specific folder…</button>
+          <button
+            onClick={async () => {
+              const rel = await api.chooseIgnoredFolder()
+              if (rel) add(rel)
+            }}
+          >
+            Choose a specific folder…
+          </button>
         </div>
 
         <div className="modal-footer">

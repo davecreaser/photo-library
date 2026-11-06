@@ -35,7 +35,14 @@ async function snapshot(dir: string): Promise<Map<string, string>> {
   for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile()) continue
     const full = join(entry.parentPath, entry.name)
-    out.set(full, createHash('sha1').update(await readFile(full)).digest('hex') + ':' + (await stat(full)).mtimeMs)
+    out.set(
+      full,
+      createHash('sha1')
+        .update(await readFile(full))
+        .digest('hex') +
+        ':' +
+        (await stat(full)).mtimeMs
+    )
   }
   return out
 }
@@ -54,7 +61,8 @@ const scan = (db: LibraryDb, base: string) => {
   return scanLibrary(db, base, () => {})
 }
 
-async function cleanup(root: string) {
+async function cleanup(root: string, db?: LibraryDb) {
+  db?.close()
   protectedNow = []
   await rm(root, { recursive: true, force: true })
 }
@@ -86,7 +94,10 @@ test('scans, indexes dates, organises virtually and never modifies photos', asyn
   assert.equal(db.queryPhotos({}).photos.at(-1)!.id, misc.id, 'undated sorts last')
 
   const album = db.createAlbum('Holidays', null)
-  db.addToAlbum(album.id, spain.photos.map((p) => p.id))
+  db.addToAlbum(
+    album.id,
+    spain.photos.map((p) => p.id)
+  )
   db.addTag([spain.photos[0].id], 'Jake')
   assert.equal(db.queryPhotos({ text: 'jake' }).total, 1)
   assert.equal(db.queryPhotos({ text: 'holidays 2020' }).total, 2)
@@ -102,7 +113,7 @@ test('scans, indexes dates, organises virtually and never modifies photos', asyn
   assert.deepEqual(await snapshot(photos), before, 'photo folder byte-for-byte unchanged')
 
   await assert.rejects(rm(photos, { recursive: true }), 'the guard was active throughout')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('moving or renaming files keeps tags, albums and favourites', async () => {
@@ -125,11 +136,17 @@ test('moving or renaming files keeps tags, albums and favourites', async () => {
 
   const moved = db.getPhoto(jake.id)!
   assert.equal(moved.path, join(photos, 'jake birthday', 'cake.jpg'))
-  assert.deepEqual(moved.tags.map((t) => t.name), ['Jake'])
-  assert.deepEqual(moved.albums.map((a) => a.name), ['Birthday'])
+  assert.deepEqual(
+    moved.tags.map((t) => t.name),
+    ['Jake']
+  )
+  assert.deepEqual(
+    moved.albums.map((a) => a.name),
+    ['Birthday']
+  )
   assert.equal(moved.favorite, true)
   assert.equal(db.counts().photoCount, 2)
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('a new base folder with the same photos keeps everything', async () => {
@@ -154,7 +171,7 @@ test('a new base folder with the same photos keeps everything', async () => {
   assert.equal(tagged.length, 1)
   assert.equal(tagged[0].id, p1.id)
   assert.equal(tagged[0].path, join(newBase, 'flat', 'IMG_A.jpg'))
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('identical copies are one photo with several locations', async () => {
@@ -174,7 +191,7 @@ test('identical copies are one photo with several locations', async () => {
   db.setFavorite([only.id], true)
   assert.equal(db.getPhoto(only.id)!.favorite, true)
   assert.equal(db.counts().favoriteCount, 1)
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('a photo edited in place keeps its tags', async () => {
@@ -188,8 +205,11 @@ test('a photo edited in place keeps its tags', async () => {
   await makePhoto(join(photos, 'x.jpg'), '2024:01:01 10:00:00') // re-exported with edits, outside the app
   const r = await scan(db, photos)
   assert.deepEqual([r.added, r.updated], [0, 1])
-  assert.deepEqual(db.getPhoto(p.id)!.tags.map((t) => t.name), ['Jake'])
-  await cleanup(root)
+  assert.deepEqual(
+    db.getPhoto(p.id)!.tags.map((t) => t.name),
+    ['Jake']
+  )
+  await cleanup(root, db)
 })
 
 test('upgrades a v1 library, merging copies and keeping albums', async () => {
@@ -211,8 +231,12 @@ test('upgrades a v1 library, merging copies and keeping albums', async () => {
     CREATE TABLE photo_tags (photo_id INTEGER NOT NULL REFERENCES photos (id) ON DELETE CASCADE, tag_id INTEGER NOT NULL REFERENCES tags (id) ON DELETE CASCADE, PRIMARY KEY (photo_id, tag_id));
   `)
   v1.prepare("INSERT INTO settings VALUES ('basePath', ?)").run(photos)
-  v1.prepare("INSERT INTO photos (id, path, file_name, ext, size, mtime_ms, taken_at, date_source) VALUES (1, ?, 'a.jpg', '.jpg', 1, 1, '2024-01-01T10:00:00', 'exif')").run(join(photos, 'a.jpg'))
-  v1.prepare("INSERT INTO photos (id, path, file_name, ext, size, mtime_ms, taken_at, date_source) VALUES (2, ?, 'a-copy.jpg', '.jpg', 1, 1, '2024-01-01T10:00:00', 'exif')").run(join(photos, 'a-copy.jpg'))
+  v1.prepare(
+    "INSERT INTO photos (id, path, file_name, ext, size, mtime_ms, taken_at, date_source) VALUES (1, ?, 'a.jpg', '.jpg', 1, 1, '2024-01-01T10:00:00', 'exif')"
+  ).run(join(photos, 'a.jpg'))
+  v1.prepare(
+    "INSERT INTO photos (id, path, file_name, ext, size, mtime_ms, taken_at, date_source) VALUES (2, ?, 'a-copy.jpg', '.jpg', 1, 1, '2024-01-01T10:00:00', 'exif')"
+  ).run(join(photos, 'a-copy.jpg'))
   v1.exec("INSERT INTO albums (id, name) VALUES (1, 'Kept'); INSERT INTO album_photos (album_id, photo_id) VALUES (1, 2);")
   v1.exec("INSERT INTO tags (id, name) VALUES (1, 'Jake'); INSERT INTO photo_tags VALUES (1, 1);")
   v1.close()
@@ -224,10 +248,16 @@ test('upgrades a v1 library, merging copies and keeping albums', async () => {
   assert.equal(db.counts().photoCount, 1, 'the two v1 rows were the same photo')
   const [p] = db.queryPhotos({}).photos
   const details = db.getPhoto(p.id)!
-  assert.deepEqual(details.albums.map((a) => a.name), ['Kept'])
-  assert.deepEqual(details.tags.map((t) => t.name), ['Jake'])
+  assert.deepEqual(
+    details.albums.map((a) => a.name),
+    ['Kept']
+  )
+  assert.deepEqual(
+    details.tags.map((t) => t.name),
+    ['Jake']
+  )
   assert.equal(details.locations.length, 2)
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('photos that disappear are hidden, and can be forgotten without touching files', async () => {
@@ -238,7 +268,9 @@ test('photos that disappear are hidden, and can be forgotten without touching fi
   const db = new LibraryDb(join(appData, 'library.db'))
   await scan(db, photos)
   const [gone] = db.queryPhotos({ text: 'jake_birth' }).photos
-  const goneHash = createHash('sha256').update(await readFile(gone.path)).digest('hex')
+  const goneHash = createHash('sha256')
+    .update(await readFile(gone.path))
+    .digest('hex')
   db.addTag([gone.id], 'Jake')
   userFs.mv(join(photos, 'jake_birth'), join(root, 'elsewhere', 'jake_birth'))
   const r = await scan(db, photos)
@@ -249,7 +281,7 @@ test('photos that disappear are hidden, and can be forgotten without touching fi
   assert.equal(db.listTags().length, 0)
   assert.equal(db.counts().photoCount, 1)
   assert.ok((await stat(join(root, 'elsewhere', 'jake_birth', '1.jpeg'))).isFile(), 'the file itself still exists')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('suggests and applies the camera clock fix, virtually', async () => {
@@ -287,7 +319,7 @@ test('suggests and applies the camera clock fix, virtually', async () => {
   organiser.removeCorrection(organiser.listCorrections()[0].id)
   assert.equal(db.queryPhotos({ text: 'august 2025' }).total, 0)
   assert.deepEqual(await snapshot(photos), before, 'no EXIF was written')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('ignore rules: folder names anywhere, folder paths from the base, case-insensitive, only below the base', () => {
@@ -324,8 +356,16 @@ test('adding an ignore rule forgets those photos (faces, tags and all); removing
 
   db.setSetting('ignoredFolders', JSON.stringify(['private', 'lisstraat_listing', 'secret']))
   let forgotten = { hashes: [] as string[], faceIds: [] as number[] }
-  await scanLibrary(db, photos, () => {}, (f) => (forgotten = f))
-  assert.deepEqual(db.queryPhotos({}).photos.map((p) => p.fileName), ['a.jpg'])
+  await scanLibrary(
+    db,
+    photos,
+    () => {},
+    (f) => (forgotten = f)
+  )
+  assert.deepEqual(
+    db.queryPhotos({}).photos.map((p) => p.fileName),
+    ['a.jpg']
+  )
   assert.equal(forgotten.hashes.length, 2)
   assert.deepEqual(forgotten.faceIds, [faceId], 'face crops can be cleaned up too')
   assert.equal(db.listTags().length, 0)
@@ -336,7 +376,7 @@ test('adding an ignore rule forgets those photos (faces, tags and all); removing
   assert.equal(r.added, 1, 'un-ignored folder comes back on the next scan')
   assert.equal(db.counts().photoCount, 2)
   assert.deepEqual(await snapshot(photos), before, 'files untouched throughout')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('skips "private" folders and forgets previously indexed private photos', async () => {
@@ -349,17 +389,40 @@ test('skips "private" folders and forgets previously indexed private photos', as
 
   const db = new LibraryDb(join(appData, 'library.db'))
   // Simulate a private photo indexed (and tagged) before the rule existed.
-  db.recordFile({ path: join(photos, 'Private', 'a.jpg'), size: 1, mtimeMs: 1, takenAt: null, width: null, height: null, orientation: null, camera: null, lat: null, lon: null }, 'old-hash', 1)
+  db.recordFile(
+    {
+      path: join(photos, 'Private', 'a.jpg'),
+      size: 1,
+      mtimeMs: 1,
+      takenAt: null,
+      width: null,
+      height: null,
+      orientation: null,
+      camera: null,
+      lat: null,
+      lon: null
+    },
+    'old-hash',
+    1
+  )
   const old = db.queryPhotos({}).photos[0]
   db.addTag([old.id], 'secret')
 
   let forgotten: string[] = []
-  const result = await scanLibrary(db, photos, () => {}, (f) => (forgotten = f.hashes))
+  const result = await scanLibrary(
+    db,
+    photos,
+    () => {},
+    (f) => (forgotten = f.hashes)
+  )
   assert.equal(result.added, 1)
   assert.deepEqual(forgotten, ['old-hash'])
-  assert.deepEqual(db.queryPhotos({}).photos.map((p) => p.fileName), ['public.jpg'])
+  assert.deepEqual(
+    db.queryPhotos({}).photos.map((p) => p.fileName),
+    ['public.jpg']
+  )
   assert.equal(db.counts().missingCount, 0, 'private photos are forgotten, not just hidden')
   assert.equal(db.listTags().length, 0)
   assert.deepEqual(await snapshot(photos), before, 'private files are untouched')
-  await cleanup(root)
+  await cleanup(root, db)
 })

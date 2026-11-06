@@ -15,6 +15,9 @@ test('folder names: meaningful parts only, prettified', () => {
   assert.equal(folderName('2026'), null)
   assert.equal(folderName('DCIM/100CANON'), null)
   assert.equal(folderName('.'), null)
+  // Windows-style separators give the same results.
+  assert.equal(folderName('fuji\\trips\\08.25.sail_amsterdam\\best'), 'Sail Amsterdam')
+  assert.deepEqual(folderDate('fuji\\trips\\12.25.poland'), { year: 2025, month: 12, source: 'fuji/trips/12.25.poland' })
 })
 
 test('folder dates', () => {
@@ -121,9 +124,16 @@ test('merged events stay merged, absorb later photos in their dates, but not oth
   const trip = merged.find((e) => e.name === 'Norway')!
   assert.deepEqual(trip.photoIds.sort(), [1, 2, 3, 4])
   assert.equal(trip.groupId, 1)
-  assert.ok(merged.some((e) => e.name === 'Oslo Museum'), 'named folder events are not swallowed')
+  assert.ok(
+    merged.some((e) => e.name === 'Oslo Museum'),
+    'named folder events are not swallowed'
+  )
 
   // A photo added later changes the automatic event's id (it becomes that cluster's first photo); the dates still match.
   const later = detectEvents([...photos, p(6, '2026-02-01T20:00:00', 'unsorted')])
-  assert.ok(applyGroups(later, [group]).find((e) => e.name === 'Norway')!.photoIds.includes(6))
+  assert.ok(
+    applyGroups(later, [group])
+      .find((e) => e.name === 'Norway')!
+      .photoIds.includes(6)
+  )
 })

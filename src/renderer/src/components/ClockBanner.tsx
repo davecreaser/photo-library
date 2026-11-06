@@ -15,11 +15,13 @@ export function ClockBanner({ suggestion: s, onApply, onDismiss }: { suggestion:
           Your {s.camera}’s clock looks {years} year{years === 1 ? '' : 's'} {direction}
           {s.appliesBefore ? ` until ${formatDate(s.appliesBefore)}` : ''}.
         </strong>{' '}
-        Folders like {s.evidence.slice(0, 3).map(prettyFolder).join(', ')} disagree with the camera’s dates.
-        Fixing this corrects {s.photoCount.toLocaleString()} photos in Photo Library only. Your files are not changed, and you can undo it any time.
+        Folders like {s.evidence.slice(0, 3).map(prettyFolder).join(', ')} disagree with the camera’s dates. Fixing this corrects{' '}
+        {s.photoCount.toLocaleString()} photos in Photo Library only. Your files are not changed, and you can undo it any time.
       </div>
       <div className="banner-actions">
-        <button className="primary-small" onClick={onApply}>Fix dates</button>
+        <button className="primary-small" onClick={onApply}>
+          Fix dates
+        </button>
         <button onClick={onDismiss}>Ignore</button>
       </div>
     </div>

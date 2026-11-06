@@ -29,6 +29,7 @@ npm run typecheck
 ## Where data lives
 
 `~/Library/Application Support/photo-library/`:
+
 - `library.db`: SQLite index, albums, tags, settings
 - `cache/thumb`, `cache/preview`: generated thumbnails/previews (safe to delete; they regenerate)
 

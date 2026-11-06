@@ -10,9 +10,26 @@ import type { IgnoreRules } from './ignore.ts'
 
 /** Formats the app can index. Browser-native ones are shown directly, the rest via generated previews. */
 export const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif', '.tif', '.tiff',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+  '.heic',
+  '.heif',
+  '.tif',
+  '.tiff',
   // Camera RAW formats: we show their embedded JPEG preview.
-  '.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2', '.pef', '.srw'
+  '.dng',
+  '.cr2',
+  '.cr3',
+  '.nef',
+  '.arw',
+  '.raf',
+  '.orf',
+  '.rw2',
+  '.pef',
+  '.srw'
 ])
 
 /** Formats Chromium can render straight from disk at full size. */

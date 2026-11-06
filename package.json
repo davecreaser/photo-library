@@ -11,15 +11,21 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning \"test/**/*.test.ts\"",
     "postinstall": "node scripts/fetch-models.mjs",
-    "fetch-models": "node scripts/fetch-models.mjs"
+    "fetch-models": "node scripts/fetch-models.mjs",
+    "prepare": "husky",
+    "e2e": "electron-vite build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@types/node": "24.19.2",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.2",
     "electron": "44.9.0",
     "electron-vite": "6.0.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.0",
+    "prettier": "3.9.10",
     "typescript": "7.0.2",
     "vite": "8.3.4"
   },

@@ -82,9 +82,7 @@ export function clusterFaces(faces: FaceVector[]): Map<number, number> {
   }
 
   const result = new Map<number, number>()
-  clusters
-    .sort((a, b) => b.members.length - a.members.length)
-    .forEach((c, i) => c.members.forEach((id) => result.set(id, i)))
+  clusters.sort((a, b) => b.members.length - a.members.length).forEach((c, i) => c.members.forEach((id) => result.set(id, i)))
   return result
 }
 

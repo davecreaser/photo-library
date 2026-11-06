@@ -89,29 +89,30 @@ function startScan(): Promise<void> {
     scanAgain = true
     return currentScan
   }
-  currentScan = (async () => {
-    try {
-      do {
-        scanAgain = false
-        const basePath = db.getSetting('basePath')
-        if (!basePath) return
-        await scanLibrary(
-          db,
-          basePath,
-          (p) => {
-            if (p.phase === 'done') {
-              organiser.invalidate()
-              people.kick() // analyse faces in any new photos
-            }
-            window?.webContents.send('scan:progress', p)
-          },
-          (forgotten) => void cleanUpCaches(forgotten)
-        )
-      } while (scanAgain)
-    } finally {
-      currentScan = null
-    }
-  })()
+  const run = async () => {
+    do {
+      scanAgain = false
+      const basePath = db.getSetting('basePath')
+      if (!basePath) return
+      await scanLibrary(
+        db,
+        basePath,
+        (p) => {
+          if (p.phase === 'done') {
+            organiser.invalidate()
+            people.kick() // analyse faces in any new photos
+          }
+          window?.webContents.send('scan:progress', p)
+        },
+        (forgotten) => void cleanUpCaches(forgotten)
+      )
+    } while (scanAgain)
+  }
+  // Cleared in .finally (always asynchronous), never before currentScan is assigned:
+  // a run that returns immediately (no folder chosen yet) must not leave a stale "scan in progress".
+  currentScan = run().finally(() => {
+    currentScan = null
+  })
   return currentScan
 }
 
@@ -193,9 +194,7 @@ function registerIpc(): void {
     await cleanUpCaches(forgotten)
   })
 
-  ipcMain.handle('photos:query', (_e, filter: PhotoFilter) =>
-    db.queryPhotos(filter, filter.eventId ? organiser.eventPhotoIds(filter.eventId) : undefined)
-  )
+  ipcMain.handle('photos:query', (_e, filter: PhotoFilter) => db.queryPhotos(filter, filter.eventId ? organiser.eventPhotoIds(filter.eventId) : undefined))
   ipcMain.handle('photos:get', (_e, id: number) => db.getPhoto(id))
   ipcMain.handle('photos:timeline', () => db.getTimeline())
   ipcMain.handle('photos:reveal', (_e, id: number) => {

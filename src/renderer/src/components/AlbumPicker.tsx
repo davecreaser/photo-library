@@ -8,10 +8,12 @@ export function AlbumPicker(props: { albums: Album[]; exclude?: number[]; onPick
 
   const ordered: { album: Album; depth: number }[] = []
   const walk = (parentId: number | null, depth: number) =>
-    props.albums.filter((a) => a.parentId === parentId).forEach((a) => {
-      ordered.push({ album: a, depth })
-      walk(a.id, depth + 1)
-    })
+    props.albums
+      .filter((a) => a.parentId === parentId)
+      .forEach((a) => {
+        ordered.push({ album: a, depth })
+        walk(a.id, depth + 1)
+      })
   walk(null, 0)
 
   return (
@@ -30,7 +32,9 @@ export function AlbumPicker(props: { albums: Album[]; exclude?: number[]; onPick
           onCancel={() => setCreating(false)}
         />
       ) : (
-        <div className="popover-item new" onClick={() => setCreating(true)}>＋ New album…</div>
+        <div className="popover-item new" onClick={() => setCreating(true)}>
+          ＋ New album…
+        </div>
       )}
     </div>
   )

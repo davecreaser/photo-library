@@ -3,3 +3,5 @@ out
 dist
 .DS_Store
 resources/models
+playwright-report
+test-results

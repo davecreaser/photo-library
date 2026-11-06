@@ -12,9 +12,11 @@
     "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning \"test/**/*.test.ts\"",
     "postinstall": "node scripts/fetch-models.mjs",
     "fetch-models": "node scripts/fetch-models.mjs",
-    "prepare": "husky"
+    "prepare": "husky",
+    "e2e": "electron-vite build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@types/node": "24.19.2",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",

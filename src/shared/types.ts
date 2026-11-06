@@ -76,7 +76,7 @@ export interface DismissedSuggestion {
   end: string | null
   coverId: number | null
   /** Why it wouldn't be listed even if restored, if so. */
-  note: 'below-minimum' | 'in-album' | null
+  note: 'below-minimum' | 'in-album' | 'not-here' | null
 }
 
 export interface Person {

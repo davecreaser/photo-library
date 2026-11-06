@@ -182,7 +182,10 @@ export function App() {
 
   /** Runs one decision at a time; a failure (e.g. a rescan changed the suggestion) is shown, then the list refreshes. */
   const decide = async <T,>(run: () => Promise<T>): Promise<T> => {
-    if (deciding.current) throw new Error('busy')
+    if (deciding.current) {
+      setNotice({ kind: 'error', message: 'Still working on the last change. Try again in a moment.' })
+      throw new Error('busy')
+    }
     deciding.current = true
     try {
       return await run()

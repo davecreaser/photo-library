@@ -350,3 +350,83 @@ test('review: upgrading a v3 library keeps albums, tags, merges and settings', (
   upgraded.close()
   rmSync(dir, { recursive: true, force: true })
 })
+
+test('review 2: ignoring a folder forgets decisions even when a photo has a copy elsewhere (ADR 0007)', () => {
+  const { db, organiser, add, close } = setup()
+  const [photo] = add('personal/09.25.therapy_notes', 1, '2025-09-01T10:00:00')
+  const [first] = db.queryPhotos({}).photos
+  // A backup copy of the same photo (same content) somewhere else in the library.
+  db.recordFile(
+    {
+      path: `${BASE}/backup/IMG_copy.jpg`,
+      size: 1,
+      mtimeMs: 1,
+      takenAt: '2025-09-01T10:00:00',
+      width: null,
+      height: null,
+      orientation: null,
+      camera: null,
+      lat: null,
+      lon: null
+    },
+    'hash-1',
+    1
+  )
+  organiser.invalidate()
+  organiser.dismissSuggestions([organiser.listSuggestions().find((s) => s.name.includes('Therapy'))!.id])
+  db.forgetFiles((path) => path.includes('/personal/'))
+  organiser.invalidate()
+  assert.equal(db.queryPhotos({}).total, 1, 'the photo survives through its backup copy')
+  assert.deepEqual(organiser.listDismissed(), [], 'but the private folder name is gone')
+  void photo
+  void first
+  close()
+})
+
+test('review 2: a merge with some photos missing waits rather than becoming a partial album', () => {
+  const { db, organiser, add, close } = setup()
+  const a = add('unsorted', 20, '2026-01-31T10:00:00')
+  const b = add('unsorted', 20, '2026-02-02T10:00:00')
+  db.addEventGroup({ name: 'Trip', start: null, end: null, members: [`t:${a[0]}`, `t:${b[0]}`] })
+  // b's drive is unplugged: its photos are missing.
+  db.recordFile(
+    {
+      path: `${BASE}/unsorted/IMG_1.jpg`,
+      size: 1,
+      mtimeMs: 1,
+      takenAt: '2026-01-31T10:00:00',
+      width: null,
+      height: null,
+      orientation: null,
+      camera: null,
+      lat: null,
+      lon: null
+    },
+    'hash-1',
+    7
+  )
+  for (let i = 2; i <= 20; i++)
+    db.recordFile(
+      {
+        path: `${BASE}/unsorted/IMG_${i}.jpg`,
+        size: 1,
+        mtimeMs: 1,
+        takenAt: new Date(Date.UTC(2026, 0, 31, 10, (i - 1) * 10)).toISOString().slice(0, 19),
+        width: null,
+        height: null,
+        orientation: null,
+        camera: null,
+        lat: null,
+        lon: null
+      },
+      `hash-${i}`,
+      7
+    )
+  db.markMissing(7)
+  db.refreshDerived()
+  organiser.invalidate()
+  organiser.convertOldMerges()
+  assert.equal(db.listAlbums().length, 0, 'no partial album')
+  assert.equal(db.eventGroups().length, 1, 'kept for later')
+  close()
+})

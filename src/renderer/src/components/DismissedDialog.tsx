@@ -13,7 +13,9 @@ function meta(d: DismissedSuggestion, minBurstSize: number): string {
       ? ` · Not suggested at the moment: fewer than ${minBurstSize.toLocaleString()} photos`
       : d.note === 'in-album'
         ? ' · Not suggested at the moment: already in an album'
-        : ''
+        : d.note === 'not-here'
+          ? ' · Not suggested at the moment: its photos aren’t in the library right now'
+          : ''
   return range + count + note
 }
 
@@ -21,8 +23,9 @@ function meta(d: DismissedSuggestion, minBurstSize: number): string {
 export function DismissedDialog({ minBurstSize, onClose, onChanged }: { minBurstSize: number; onClose: () => void; onChanged: () => void }) {
   const [list, setList] = useState<DismissedSuggestion[] | null>(null)
   const [shown, setShown] = useState(PAGE)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
-    void api.getDismissedSuggestions().then(setList)
+    void api.getDismissedSuggestions().then(setList, () => setFailed(true))
   }, [])
 
   return (
@@ -32,6 +35,7 @@ export function DismissedDialog({ minBurstSize, onClose, onChanged }: { minBurst
         <p className="hint">
           These won’t be suggested again. Restore one to put it back in Suggested albums. Your photos and files aren’t affected either way.
         </p>
+        {failed && <p className="error">The dismissed list couldn’t be loaded.</p>}
         {list?.length === 0 && <p className="hint">Nothing dismissed.</p>}
         {list?.slice(0, shown).map((d) => (
           <div key={d.id} className="correction dismissed-row">

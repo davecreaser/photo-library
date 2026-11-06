@@ -416,6 +416,12 @@ export class LibraryDb {
     const rows = this.db.prepare('SELECT id, path FROM files').all() as Row[]
     const ids = rows.filter((r) => exclude(r.path as string)).map((r) => r.id as number)
     return this.transaction(() => {
+      // Suggestion decisions involving any photo with a copy in an ignored folder are forgotten,
+      // even if the photo survives through another copy: their names may come from that folder (ADR 0007).
+      const forgetDecision = this.db.prepare(
+        'DELETE FROM suggestion_decisions WHERE id IN (SELECT dp.decision_id FROM suggestion_decision_photos dp JOIN files f ON f.photo_id = dp.photo_id WHERE f.id = ?)'
+      )
+      ids.forEach((id) => forgetDecision.run(id))
       const del = this.db.prepare('DELETE FROM files WHERE id = ?')
       ids.forEach((id) => del.run(id))
       return this.deletePhotosWhere('NOT EXISTS (SELECT 1 FROM files WHERE photo_id = photos.id)')

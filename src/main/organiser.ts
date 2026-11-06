@@ -32,21 +32,32 @@ export class Organiser {
   /**
    * Before suggested albums, users could merge and rename events. Each merge not
    * already (mostly) saved as an album becomes one (spec 0001, AC-9). Run at startup.
-   * A merge whose photos aren't present (e.g. an unplugged drive) is kept for a later run.
+   * While some photos are missing (e.g. an unplugged drive), a merge is converted only once
+   * every event in it is found, so no partial album is made; otherwise it waits for a later run.
+   * With nothing missing, merges that can no longer be found are dropped.
    */
   convertOldMerges(): void {
     const merges = this.db.eventGroups()
     if (merges.length === 0) return
+    const somethingMissing = this.db.counts().missingCount > 0
+    const ids = new Set(this.groups().map((g) => g.id))
     this.db.transaction(() => {
       const albums = this.db.albumPhotoSets()
-      for (const merged of applyGroups(this.groups(), merges)) {
-        if (merged.groupId === undefined) continue
-        if (selectSuggestions([merged], 1, [], albums).length > 0) {
+      const built = new Map(
+        applyGroups(this.groups(), merges)
+          .filter((e) => e.groupId !== undefined)
+          .map((e) => [e.groupId!, e])
+      )
+      for (const merge of merges) {
+        const complete = merge.members.every((m) => ids.has(m))
+        if (somethingMissing && !complete) continue
+        const merged = built.get(merge.id)
+        if (merged && selectSuggestions([merged], 1, [], albums).length > 0) {
           const album = this.db.createAlbum(merged.name, null)
           this.db.addToAlbum(album.id, merged.photoIds)
           albums.push({ id: album.id, photoIds: merged.photoIds })
         }
-        this.db.deleteEventGroup(merged.groupId)
+        this.db.deleteEventGroup(merge.id)
       }
     })
   }
@@ -130,8 +141,9 @@ export class Organiser {
       const [best] = [...counts].sort((a, b) => b[1] - a[1])
       const group = best && best[1] * 2 >= groups[best[0]].photoIds.length ? groups[best[0]] : undefined
       let note: DismissedSuggestion['note'] = null
-      if (group && !isCandidate(group, min)) note = 'below-minimum'
-      else if (group && selectSuggestions([group], min, [], albums).length === 0) note = 'in-album'
+      if (!group) note = 'not-here'
+      else if (!isCandidate(group, min)) note = 'below-minimum'
+      else if (selectSuggestions([group], min, [], albums).length === 0) note = 'in-album'
       return { ...d, note }
     })
   }

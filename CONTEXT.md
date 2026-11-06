@@ -61,9 +61,9 @@ _Avoid_: keyword, label
 A photo the user has starred. Never inferred from folder names.
 _Avoid_: best, pick
 
-**Event**:
-A group of photos taken together, detected automatically from folder names and gaps in time, or made by the user merging or renaming events.
-_Avoid_: trip, occasion, moment (a trip is just an event the user has named)
+**Suggested album**:
+A group of photos the app proposes as an album, from a named folder or a burst of photos taken together. Accepting makes it an album; dismissing hides it for good.
+_Avoid_: event, trip, moment
 
 ### People
 

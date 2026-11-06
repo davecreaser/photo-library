@@ -13,7 +13,7 @@ import type { FaceVector, KnownPerson } from './faceGroups.ts'
 import { correctedTime, correctionApplies, type Correction } from './dates.ts'
 import type { EventGroup } from './events.ts'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -120,6 +120,23 @@ CREATE TABLE IF NOT EXISTS face_rejections (
   person_id INTEGER NOT NULL REFERENCES people (id) ON DELETE CASCADE,
   PRIMARY KEY (face_id, person_id)
 );
+
+-- The user's decisions on suggested albums (spec 0001), kept by photo so they survive
+-- moves and renames. An accepted decision belongs to its album: deleting the album
+-- deletes the decision, so the suggestion comes back.
+CREATE TABLE IF NOT EXISTS suggestion_decisions (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('accepted', 'dismissed')),
+  name TEXT NOT NULL,
+  album_id INTEGER REFERENCES albums (id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS suggestion_decision_photos (
+  decision_id INTEGER NOT NULL REFERENCES suggestion_decisions (id) ON DELETE CASCADE,
+  photo_id INTEGER NOT NULL REFERENCES photos (id) ON DELETE CASCADE,
+  PRIMARY KEY (decision_id, photo_id)
+);
+CREATE INDEX IF NOT EXISTS suggestion_decision_photos_photo ON suggestion_decision_photos (photo_id);
 
 CREATE TABLE IF NOT EXISTS clock_corrections (
   id INTEGER PRIMARY KEY,
@@ -248,16 +265,30 @@ export class LibraryDb {
     this.db.close()
   }
 
+  private depth = 0
+
+  /** Runs `fn` atomically. Nested calls join the outer transaction (via savepoints). */
   transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN')
+    const outer = this.depth === 0
+    const savepoint = `sp${this.depth}`
+    this.db.exec(outer ? 'BEGIN' : `SAVEPOINT ${savepoint}`)
+    this.depth++
+    let result: T
     try {
-      const result = fn()
-      this.db.exec('COMMIT')
-      return result
+      result = fn()
+      this.db.exec(outer ? 'COMMIT' : `RELEASE ${savepoint}`)
     } catch (e) {
-      this.db.exec('ROLLBACK')
+      // Also reached if COMMIT/RELEASE itself fails (disk full, I/O error): undo and pass the error on.
+      try {
+        this.db.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
+      } catch {
+        // Nothing left to roll back (e.g. SQLite already ended the transaction).
+      }
       throw e
+    } finally {
+      this.depth--
     }
+    return result
   }
 
   // --- settings ---
@@ -358,6 +389,11 @@ export class LibraryDb {
       .run(keepId, dropId)
     this.db.prepare('INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) SELECT ?, tag_id FROM photo_tags WHERE photo_id = ?').run(keepId, dropId)
     this.db.prepare('UPDATE photos SET favorite = COALESCE(favorite, (SELECT favorite FROM photos WHERE id = ?)) WHERE id = ?').run(dropId, keepId)
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO suggestion_decision_photos (decision_id, photo_id) SELECT decision_id, ? FROM suggestion_decision_photos WHERE photo_id = ?'
+      )
+      .run(keepId, dropId)
     // Same content, so the same faces: keep whichever copy has them analysed (and named).
     if (!this.db.prepare('SELECT 1 FROM faces WHERE photo_id = ?').get(keepId)) {
       this.db.prepare('UPDATE faces SET photo_id = ? WHERE photo_id = ?').run(keepId, dropId)
@@ -380,6 +416,12 @@ export class LibraryDb {
     const rows = this.db.prepare('SELECT id, path FROM files').all() as Row[]
     const ids = rows.filter((r) => exclude(r.path as string)).map((r) => r.id as number)
     return this.transaction(() => {
+      // Suggestion decisions involving any photo with a copy in an ignored folder are forgotten,
+      // even if the photo survives through another copy: their names may come from that folder (ADR 0007).
+      const forgetDecision = this.db.prepare(
+        'DELETE FROM suggestion_decisions WHERE id IN (SELECT dp.decision_id FROM suggestion_decision_photos dp JOIN files f ON f.photo_id = dp.photo_id WHERE f.id = ?)'
+      )
+      ids.forEach((id) => forgetDecision.run(id))
       const del = this.db.prepare('DELETE FROM files WHERE id = ?')
       ids.forEach((id) => del.run(id))
       return this.deletePhotosWhere('NOT EXISTS (SELECT 1 FROM files WHERE photo_id = photos.id)')
@@ -390,6 +432,12 @@ export class LibraryDb {
     const hashes = (this.db.prepare(`SELECT hash FROM photos WHERE ${condition}`).all() as Row[]).map((r) => r.hash as string).filter(Boolean)
     const faceIds = (this.db.prepare(`SELECT id FROM faces WHERE photo_id IN (SELECT id FROM photos WHERE ${condition})`).all() as Row[]).map(
       (r) => r.id as number
+    )
+    // Any suggestion decision that involved a forgotten photo goes too, with its name, which may
+    // come from a private folder (ADR 0007). Albums are untouched: an accepted suggestion stays
+    // hidden because its photos are in the album.
+    this.db.exec(
+      `DELETE FROM suggestion_decisions WHERE id IN (SELECT decision_id FROM suggestion_decision_photos WHERE photo_id IN (SELECT id FROM photos WHERE ${condition}))`
     )
     this.db.exec(`DELETE FROM photos WHERE ${condition}`)
     return { hashes, faceIds }
@@ -552,12 +600,12 @@ export class LibraryDb {
     const dirs = new Map<number, string[]>()
     for (const f of this.db.prepare('SELECT photo_id, path FROM files WHERE missing = 0').all() as Row[]) {
       const id = f.photo_id as number
-      dirs.set(id, [
-        ...(dirs.get(id) ?? []),
-        dirname(relative(basePath, f.path as string))
-          .split(sep)
-          .join('/')
-      ])
+      const dir = dirname(relative(basePath, f.path as string))
+        .split(sep)
+        .join('/')
+      const list = dirs.get(id)
+      if (list) list.push(dir)
+      else dirs.set(id, [dir])
     }
     return rows.map((r) => ({
       id: r.id as number,
@@ -760,7 +808,76 @@ export class LibraryDb {
     })
   }
 
-  // --- event merges/renames ---
+  // --- suggested albums ---
+
+  /** Records an accept or dismiss of a suggestion; returns its id. */
+  recordDecision(kind: 'accepted' | 'dismissed', name: string, photoIds: number[], albumId: number | null): number {
+    return this.transaction(() => {
+      const id = (this.db.prepare('INSERT INTO suggestion_decisions (kind, name, album_id) VALUES (?, ?, ?) RETURNING id').get(kind, name, albumId) as Row)
+        .id as number
+      const add = this.db.prepare('INSERT OR IGNORE INTO suggestion_decision_photos (decision_id, photo_id) VALUES (?, ?)')
+      photoIds.forEach((p) => add.run(id, p))
+      return id
+    })
+  }
+
+  deleteDecision(id: number): void {
+    this.db.prepare('DELETE FROM suggestion_decisions WHERE id = ?').run(id)
+  }
+
+  /** Every decision's photos (including missing ones, so decisions hold when they come back). */
+  decisionPhotoSets(): { id: number; photoIds: number[] }[] {
+    return this.photoSets('SELECT decision_id AS id, photo_id FROM suggestion_decision_photos')
+  }
+
+  /** Every album's present photos. */
+  albumPhotoSets(): { id: number; photoIds: number[] }[] {
+    return this.photoSets('SELECT ap.album_id AS id, ap.photo_id FROM album_photos ap JOIN photos p ON p.id = ap.photo_id WHERE p.present = 1')
+  }
+
+  private photoSets(sql: string): { id: number; photoIds: number[] }[] {
+    const sets = new Map<number, number[]>()
+    for (const r of this.db.prepare(sql).all() as Row[]) {
+      const id = r.id as number
+      const list = sets.get(id)
+      if (list) list.push(r.photo_id as number)
+      else sets.set(id, [r.photo_id as number])
+    }
+    return [...sets].map(([id, photoIds]) => ({ id, photoIds }))
+  }
+
+  /** Capture times of photos currently missing (e.g. on an unplugged drive). */
+  missingCaptureTimes(): string[] {
+    return (this.db.prepare('SELECT taken_at FROM photos WHERE present = 0 AND taken_at IS NOT NULL').all() as Row[]).map((r) => r.taken_at as string)
+  }
+
+  dismissedCount(): number {
+    return (this.db.prepare("SELECT count(*) AS n FROM suggestion_decisions WHERE kind = 'dismissed'").get() as Row).n as number
+  }
+
+  /** Dismissed suggestions (counting present photos; all may be missing), newest first. */
+  listDismissed(): { id: number; name: string; photoCount: number; start: string | null; end: string | null; coverId: number | null }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT d.id, d.name, count(p.id) AS photo_count, min(p.taken_at) AS start, max(p.taken_at) AS end, min(p.id) AS cover
+         FROM suggestion_decisions d
+         JOIN suggestion_decision_photos dp ON dp.decision_id = d.id
+         LEFT JOIN photos p ON p.id = dp.photo_id AND p.present = 1
+         WHERE d.kind = 'dismissed'
+         GROUP BY d.id ORDER BY d.id DESC`
+      )
+      .all() as Row[]
+    return rows.map((r) => ({
+      id: r.id as number,
+      name: r.name as string,
+      photoCount: r.photo_count as number,
+      start: (r.start as string) ?? null,
+      end: (r.end as string) ?? null,
+      coverId: (r.cover as number) ?? null
+    }))
+  }
+
+  // --- event merges/renames (pre-0001; only read to convert old merges into albums) ---
 
   eventGroups(): EventGroup[] {
     const rows = this.db.prepare('SELECT * FROM event_groups ORDER BY id').all() as Row[]
@@ -826,14 +943,21 @@ export class LibraryDb {
   listAlbums(): Album[] {
     const rows = this.db
       .prepare(
-        `SELECT a.id, a.parent_id, a.name, count(p.id) AS photo_count
+        `SELECT a.id, a.parent_id, a.name, count(p.id) AS photo_count,
+           EXISTS (SELECT 1 FROM suggestion_decisions d WHERE d.album_id = a.id) AS from_suggestion
          FROM albums a
          LEFT JOIN album_photos ap ON ap.album_id = a.id
          LEFT JOIN photos p ON p.id = ap.photo_id AND p.present = 1
          GROUP BY a.id ORDER BY a.name COLLATE NOCASE`
       )
       .all() as Row[]
-    return rows.map((r) => ({ id: r.id as number, parentId: (r.parent_id as number) ?? null, name: r.name as string, photoCount: r.photo_count as number }))
+    return rows.map((r) => ({
+      id: r.id as number,
+      parentId: (r.parent_id as number) ?? null,
+      name: r.name as string,
+      photoCount: r.photo_count as number,
+      fromSuggestion: !!r.from_suggestion
+    }))
   }
 
   createAlbum(name: string, parentId: number | null): Album {

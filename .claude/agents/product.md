@@ -12,9 +12,12 @@ Write the spec to the path you were given, from `docs/specs/TEMPLATE.md`. Fill e
 
 Acceptance criteria are the heart of the spec:
 
-- Each is **testable**: a Given/When/Then a QA engineer could show passing or failing in the running app or a test.
-- Together they are **exhaustive** for the stories: every story is covered, including empty, error and very-large-library cases.
+- Each is **testable**: a QA engineer could show it passing or failing in the running app or a test, with concrete examples ("20 photos is suggested, 19 is not").
+- They are **broad**: one criterion per behaviour, covering its edge cases in a sentence or two, rather than one per edge case. Aim for 10–15 in total; safety and privacy are one criterion, performance at scale another.
+- Together they cover every story, including empty, error and very-large-library cases.
 - Scope is the smallest version that solves the problem; everything else goes in Non-goals.
+
+Measuring against the owner's real library is welcome, strictly read-only; real names and photos never go into tests.
 
 Be candid in Open questions: anything you guessed about the user's intent, every product trade-off (free vs paid tier, personal vs general behaviour), and conflicts with an ADR. The user answers these before work starts.
 

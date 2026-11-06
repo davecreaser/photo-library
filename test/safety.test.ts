@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 
 const SRC = join(import.meta.dirname, '..', 'src')
 const WRITERS = new Set(['main/appFiles.ts', 'main/fsGuard.ts'])
@@ -45,7 +45,7 @@ function sourceFiles(dir: string): string[] {
 test('source audit: only appFiles.ts and fsGuard.ts can write', () => {
   const problems: string[] = []
   for (const file of sourceFiles(SRC)) {
-    const rel = relative(SRC, file)
+    const rel = relative(SRC, file).split(sep).join('/')
     if (WRITERS.has(rel)) continue
     const code = fs.readFileSync(file, 'utf8')
     for (const pattern of FORBIDDEN) if (pattern.test(code)) problems.push(`${rel}: matches ${pattern}`)

@@ -15,6 +15,9 @@ test('folder names: meaningful parts only, prettified', () => {
   assert.equal(folderName('2026'), null)
   assert.equal(folderName('DCIM/100CANON'), null)
   assert.equal(folderName('.'), null)
+  // Windows-style separators give the same results.
+  assert.equal(folderName('fuji\\trips\\08.25.sail_amsterdam\\best'), 'Sail Amsterdam')
+  assert.deepEqual(folderDate('fuji\\trips\\12.25.poland'), { year: 2025, month: 12, source: 'fuji/trips/12.25.poland' })
 })
 
 test('folder dates', () => {

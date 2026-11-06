@@ -6,7 +6,7 @@
 // never loses a photo's albums, tags or favourite: the next scan finds the same
 // hash at the new path and links it to the same photo.
 import { DatabaseSync } from 'node:sqlite'
-import { basename, extname, relative, dirname } from 'node:path'
+import { basename, extname, relative, dirname, sep } from 'node:path'
 import { parseSearch } from '../shared/search.ts'
 import type { Album, FaceGroup, Person, PersonFace, Photo, PhotoDetails, PhotoFilter, PhotoPage, Tag, TimelineMonth } from '../shared/types.ts'
 import type { FaceVector, KnownPerson } from './faceGroups.ts'
@@ -169,7 +169,7 @@ export interface PhotoForOrganising {
   takenAt: string | null
   takenAtRaw: string | null
   favorite: boolean
-  /** Folders of present copies, relative to the base folder. */
+  /** Folders of present copies, relative to the base folder, "/"-separated on every OS. */
   dirs: string[]
 }
 
@@ -241,6 +241,11 @@ export class LibraryDb {
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     })
     this.db.exec('PRAGMA legacy_alter_table = OFF;')
+  }
+
+  /** Closes the database (on Windows an open database file can't be moved or deleted). */
+  close(): void {
+    this.db.close()
   }
 
   transaction<T>(fn: () => T): T {
@@ -547,7 +552,12 @@ export class LibraryDb {
     const dirs = new Map<number, string[]>()
     for (const f of this.db.prepare('SELECT photo_id, path FROM files WHERE missing = 0').all() as Row[]) {
       const id = f.photo_id as number
-      dirs.set(id, [...(dirs.get(id) ?? []), dirname(relative(basePath, f.path as string))])
+      dirs.set(id, [
+        ...(dirs.get(id) ?? []),
+        dirname(relative(basePath, f.path as string))
+          .split(sep)
+          .join('/')
+      ])
     }
     return rows.map((r) => ({
       id: r.id as number,

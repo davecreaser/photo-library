@@ -1,8 +1,6 @@
 // Extracts meaning from the user's folder names: event names ("Sail Amsterdam"),
 // favourite markers ("best"), and dates ("08.25" = August 2025).
-// All functions take a folder path RELATIVE to the base folder.
-import { sep } from 'node:path'
-
+// All functions take a folder path RELATIVE to the base folder ("/" or "\\" separated).
 /** Folders that say nothing about what's in them. */
 const GENERIC = new Set([
   'unsorted',
@@ -53,8 +51,9 @@ const GENERIC = new Set([
   'phone'
 ])
 
+/** Folder segments, whichever separator the path uses ("a/b" or "a\\b" on Windows). */
 function segments(relDir: string): string[] {
-  return relDir.split(sep).filter((s) => s && s !== '.')
+  return relDir.split(/[\\/]/).filter((s) => s && s !== '.')
 }
 
 /** Removes date prefixes like "08.25.", "2020-08 ", "2021_12_" from a folder name. */
@@ -105,7 +104,7 @@ export function folderDate(relDir: string): FolderDate | null {
   const segs = segments(relDir)
   for (let i = segs.length - 1; i >= 0; i--) {
     const s = segs[i]
-    const source = segs.slice(0, i + 1).join(sep)
+    const source = segs.slice(0, i + 1).join('/')
     let m = /^(\d{1,2})[._-](\d{2})([._\s-]|$)/.exec(s)
     if (m && Number(m[1]) >= 1 && Number(m[1]) <= 12) return { year: 2000 + Number(m[2]), month: Number(m[1]), source }
     m = /(?:^|[^\d])((?:19|20)\d{2})[._-](\d{1,2})(?:[^\d]|$)/.exec(s)

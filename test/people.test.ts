@@ -84,6 +84,7 @@ test('name a group once, then new photos of that person are recognised and searc
   )
   void jakeInGroup
   db.listPeople().forEach((p) => assert.ok(p.coverFaceId))
+  db.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -113,6 +114,7 @@ test('"not this person" sticks, and renaming to an existing name merges people',
   people.deletePerson(jakeP.id)
   assert.equal(db.listPeople().length, 0)
   assert.equal(db.queryPhotos({}).total, 5, 'forgetting a person never removes photos')
+  db.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -133,5 +135,6 @@ test('faces and names follow the photo when the file moves', () => {
     .photos.map((p) => p.path)
     .sort()
   assert.deepEqual(found, ['/photos/moved/x-renamed.jpg', '/photos/y.jpg'])
+  db.close()
   rmSync(dir, { recursive: true, force: true })
 })

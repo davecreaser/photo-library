@@ -61,7 +61,8 @@ const scan = (db: LibraryDb, base: string) => {
   return scanLibrary(db, base, () => {})
 }
 
-async function cleanup(root: string) {
+async function cleanup(root: string, db?: LibraryDb) {
+  db?.close()
   protectedNow = []
   await rm(root, { recursive: true, force: true })
 }
@@ -112,7 +113,7 @@ test('scans, indexes dates, organises virtually and never modifies photos', asyn
   assert.deepEqual(await snapshot(photos), before, 'photo folder byte-for-byte unchanged')
 
   await assert.rejects(rm(photos, { recursive: true }), 'the guard was active throughout')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('moving or renaming files keeps tags, albums and favourites', async () => {
@@ -145,7 +146,7 @@ test('moving or renaming files keeps tags, albums and favourites', async () => {
   )
   assert.equal(moved.favorite, true)
   assert.equal(db.counts().photoCount, 2)
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('a new base folder with the same photos keeps everything', async () => {
@@ -170,7 +171,7 @@ test('a new base folder with the same photos keeps everything', async () => {
   assert.equal(tagged.length, 1)
   assert.equal(tagged[0].id, p1.id)
   assert.equal(tagged[0].path, join(newBase, 'flat', 'IMG_A.jpg'))
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('identical copies are one photo with several locations', async () => {
@@ -190,7 +191,7 @@ test('identical copies are one photo with several locations', async () => {
   db.setFavorite([only.id], true)
   assert.equal(db.getPhoto(only.id)!.favorite, true)
   assert.equal(db.counts().favoriteCount, 1)
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('a photo edited in place keeps its tags', async () => {
@@ -208,7 +209,7 @@ test('a photo edited in place keeps its tags', async () => {
     db.getPhoto(p.id)!.tags.map((t) => t.name),
     ['Jake']
   )
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('upgrades a v1 library, merging copies and keeping albums', async () => {
@@ -256,7 +257,7 @@ test('upgrades a v1 library, merging copies and keeping albums', async () => {
     ['Jake']
   )
   assert.equal(details.locations.length, 2)
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('photos that disappear are hidden, and can be forgotten without touching files', async () => {
@@ -280,7 +281,7 @@ test('photos that disappear are hidden, and can be forgotten without touching fi
   assert.equal(db.listTags().length, 0)
   assert.equal(db.counts().photoCount, 1)
   assert.ok((await stat(join(root, 'elsewhere', 'jake_birth', '1.jpeg'))).isFile(), 'the file itself still exists')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('suggests and applies the camera clock fix, virtually', async () => {
@@ -318,7 +319,7 @@ test('suggests and applies the camera clock fix, virtually', async () => {
   organiser.removeCorrection(organiser.listCorrections()[0].id)
   assert.equal(db.queryPhotos({ text: 'august 2025' }).total, 0)
   assert.deepEqual(await snapshot(photos), before, 'no EXIF was written')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('ignore rules: folder names anywhere, folder paths from the base, case-insensitive, only below the base', () => {
@@ -375,7 +376,7 @@ test('adding an ignore rule forgets those photos (faces, tags and all); removing
   assert.equal(r.added, 1, 'un-ignored folder comes back on the next scan')
   assert.equal(db.counts().photoCount, 2)
   assert.deepEqual(await snapshot(photos), before, 'files untouched throughout')
-  await cleanup(root)
+  await cleanup(root, db)
 })
 
 test('skips "private" folders and forgets previously indexed private photos', async () => {
@@ -423,5 +424,5 @@ test('skips "private" folders and forgets previously indexed private photos', as
   assert.equal(db.counts().missingCount, 0, 'private photos are forgotten, not just hidden')
   assert.equal(db.listTags().length, 0)
   assert.deepEqual(await snapshot(photos), before, 'private files are untouched')
-  await cleanup(root)
+  await cleanup(root, db)
 })

@@ -12,6 +12,8 @@ import { Organiser } from './organiser.ts'
 import { People } from './people.ts'
 import { Analysis } from './analysis.ts'
 import { PhotoSearch } from './photoSearch.ts'
+import { ContentModelWorker } from './contentModelWorker.ts'
+import createContentWorker from './contentWorker.ts?nodeWorker'
 import type { ClockCorrection, LibraryInfo, PhotoFilter } from '../shared/types.ts'
 
 // photo://thumb/<id> and photo://full/<id> serve images to the UI.
@@ -274,9 +276,15 @@ app.whenReady().then(() => {
     images,
     modelsDir,
     packaged: app.isPackaged,
-    onContentProgress: (p) => window?.webContents.send('content:progress', p)
+    onContentProgress: (p) => window?.webContents.send('content:progress', p),
+    // The model runs on its own thread: it would otherwise block this one, which also runs the window.
+    loadContentModel: (dir) => ContentModelWorker.start(createContentWorker, dir)
   })
-  search = new PhotoSearch(db, () => analysis.contentModel())
+  search = new PhotoSearch(
+    db,
+    () => analysis.contentModel(),
+    (e) => analysis.unavailable(e)
+  )
   loadProtectedRoots()
   registerPhotoProtocol()
   registerIpc()

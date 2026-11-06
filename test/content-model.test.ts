@@ -5,8 +5,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
 import sharp from 'sharp'
-import { ContentModel } from '../src/main/contentModel.ts'
+import { ContentModel, ContentModelUnavailable } from '../src/main/contentModel.ts'
+import { ContentModelWorker } from '../src/main/contentModelWorker.ts'
 
 const FIXTURES = join(import.meta.dirname, 'fixtures', 'siglip')
 const MODELS = join(import.meta.dirname, '..', 'resources', 'models')
@@ -59,6 +61,28 @@ test('resized images stay close to the reference (the app antialiases where the 
     const v = await model.embedImage(await decode(img.file))
     assert.ok(cosine(v, img.embedding) > 0.95, `${img.file}: cosine ${cosine(v, img.embedding)}`)
   }
+})
+
+test('on its own thread: the same vectors, the calling thread stays free, and a missing model says so (AC-12, AC-9)', async () => {
+  const start = (dir: string) => ContentModelWorker.start((o) => new Worker(new URL('../src/main/contentWorker.ts', import.meta.url), o), dir)
+  // Measure the longest stall of this thread while the worker loads both encoders and embeds.
+  let last = performance.now()
+  let longest = 0
+  const tick = setInterval(() => {
+    const now = performance.now()
+    longest = Math.max(longest, now - last)
+    last = now
+  }, 5)
+  const worker = await start(MODELS)
+  const text = await worker.embedText('sunset over water')
+  const image = await worker.embedImage(await decode('sunset.png'))
+  clearInterval(tick)
+  assert.ok(cosine(text, await model.embedText('sunset over water')) > 0.99999)
+  assert.ok(cosine(image, await model.embedImage(await decode('sunset.png'))) > 0.99999)
+  assert.ok(longest < 100, `longest stall ${Math.round(longest)} ms (loading an encoder here would stall ~250 ms)`)
+  await worker.releaseImageEncoder()
+
+  await assert.rejects(start(join(FIXTURES, 'no-models-here')), (e: unknown) => e instanceof ContentModelUnavailable && e.reason === 'missing')
 })
 
 test('phrases pick the right generated image', async () => {

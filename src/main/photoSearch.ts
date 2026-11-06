@@ -3,7 +3,7 @@
 // content phrase, best first, each photo once. Dates and people's names filter both; with no
 // content phrase left, results are exactly the name matches.
 import type { LibraryDb } from './db.ts'
-import { CONTENT_MIN_SCORE, CONTENT_MODEL_VERSION, type ContentModel } from './contentModel.ts'
+import { CONTENT_MIN_SCORE, CONTENT_MODEL_VERSION, ContentModelUnavailable, type ContentEncoder } from './contentModel.ts'
 import type { PhotoFilter, PhotoPage } from '../shared/types.ts'
 
 /** Phrases whose vectors are kept, so typing back and forth doesn't re-run the text model. */
@@ -11,7 +11,8 @@ const PHRASE_CACHE = 100
 
 export class PhotoSearch {
   private db: LibraryDb
-  private model: () => Promise<ContentModel | null>
+  private model: () => Promise<ContentEncoder | null>
+  private onModelFailed: (e: Error) => void
   private phrases = new Map<string, Float32Array>()
   /**
    * The content matches of the last search, computed with its first page and reused for later
@@ -20,9 +21,11 @@ export class PhotoSearch {
    */
   private ranked: { key: string; ids: number[] } | null = null
 
-  constructor(db: LibraryDb, model: () => Promise<ContentModel | null>) {
+  /** `onModelFailed`: the model stopped working (e.g. its thread crashed); search goes on by name. */
+  constructor(db: LibraryDb, model: () => Promise<ContentEncoder | null>, onModelFailed: (e: Error) => void = () => {}) {
     this.db = db
     this.model = model
+    this.onModelFailed = onModelFailed
   }
 
   async query(filter: PhotoFilter, eventPhotoIds?: number[]): Promise<PhotoPage> {
@@ -54,7 +57,14 @@ export class PhotoSearch {
     if (cached) return cached
     const model = await this.model()
     if (!model) return null
-    const vector = await model.embedText(phrase)
+    let vector: Float32Array
+    try {
+      vector = await model.embedText(phrase)
+    } catch (e) {
+      if (!(e instanceof ContentModelUnavailable)) throw e
+      this.onModelFailed(e)
+      return null
+    }
     this.phrases.set(phrase, vector)
     if (this.phrases.size > PHRASE_CACHE) this.phrases.delete(this.phrases.keys().next().value!)
     return vector

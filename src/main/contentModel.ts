@@ -31,7 +31,15 @@ export const CONTENT_MIN_SCORE = 0.0425
 export const CONTENT_DIM = 768
 const MODEL_DIR = 'siglip-base-patch16-224'
 
-export type UnavailableReason = 'missing' | 'damaged'
+/** Missing or damaged files, or the model (or its thread) failed to start. */
+export type UnavailableReason = 'missing' | 'damaged' | 'failed'
+
+/** What analysis and search need from the content model, wherever it runs (ContentModel, ContentModelWorker). */
+export interface ContentEncoder {
+  embedImage(image: RgbImage): Promise<Float32Array>
+  embedText(text: string): Promise<Float32Array>
+  releaseImageEncoder(): Promise<void>
+}
 
 export class ContentModelUnavailable extends Error {
   reason: UnavailableReason
@@ -63,7 +71,7 @@ export async function verifyContentModel(modelsDir: string): Promise<void> {
 
 const SESSION_OPTIONS: ort.InferenceSession.SessionOptions = { logSeverityLevel: 3, graphOptimizationLevel: 'all' }
 
-export class ContentModel {
+export class ContentModel implements ContentEncoder {
   private dir: string
   private tokenizer: SiglipTokenizer
   private vision: Promise<ort.InferenceSession> | null = null

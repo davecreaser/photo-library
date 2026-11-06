@@ -6,7 +6,7 @@ import type { AnalysisSource, LibraryDb } from './db.ts'
 import type { People } from './people.ts'
 import type { ImageCache } from './thumbnails.ts'
 import { FACE_MODEL_VERSION, type DetectedFace, type FaceAnalyser } from './faces.ts'
-import { CONTENT_MODEL_VERSION, ContentModel, ContentModelUnavailable } from './contentModel.ts'
+import { CONTENT_MODEL_VERSION, ContentModel, ContentModelUnavailable, type ContentEncoder } from './contentModel.ts'
 import { decodeForAnalysis, type RgbImage } from './decode.ts'
 import type { ContentProgress } from '../shared/types.ts'
 
@@ -24,6 +24,8 @@ export interface AnalysisOptions {
   /** True in the installed app (changes the fix shown when the model is unavailable). */
   packaged: boolean
   onContentProgress: (p: ContentProgress) => void
+  /** Loads the content model; the app runs it on its own thread (ContentModelWorker). Default: on this thread. */
+  loadContentModel?: (modelsDir: string) => Promise<ContentEncoder>
 }
 
 /**
@@ -44,7 +46,7 @@ export class Analysis {
   private o: AnalysisOptions
   private running: Promise<void> | null = null
   private again = false
-  private model: Promise<ContentModel | null> | null = null
+  private model: Promise<ContentEncoder | null> | null = null
   private progress: ContentProgress
   private lastEmit = 0
   /** When each content analysis this pass finished (within the rate window). */
@@ -61,7 +63,7 @@ export class Analysis {
   }
 
   /** The content model (for search too), or null when it's unavailable; progress then says why. */
-  contentModel(): Promise<ContentModel | null> {
+  contentModel(): Promise<ContentEncoder | null> {
     this.model ??= (async () => {
       if (this.o.db.vectors.loadError) {
         console.error('Content search unavailable: sqlite-vec failed to load:', this.o.db.vectors.loadError)
@@ -69,14 +71,20 @@ export class Analysis {
         return null
       }
       try {
-        return await ContentModel.load(this.o.modelsDir)
+        return await (this.o.loadContentModel ?? ContentModel.load)(this.o.modelsDir)
       } catch (e) {
-        console.error('Content search unavailable:', e instanceof Error ? e.message : e)
-        this.emit({ phase: 'unavailable', reason: e instanceof ContentModelUnavailable ? e.reason : 'failed' }, true)
+        this.unavailable(e)
         return null
       }
     })()
     return this.model
+  }
+
+  /** The model can't be used (it failed to load, or its thread stopped): say so, and don't use it again. */
+  unavailable(e: unknown): void {
+    console.error('Content search unavailable:', e instanceof Error ? e.message : e)
+    this.model = Promise.resolve(null)
+    this.emit({ phase: 'unavailable', reason: e instanceof ContentModelUnavailable ? e.reason : 'failed' }, true)
   }
 
   /**
@@ -111,6 +119,7 @@ export class Analysis {
     this.doneAt = []
     this.startedAt = Date.now()
     let facesTouched = false
+    let modelFailed = false
     try {
       for (;;) {
         const batch = this.o.db.photosNeedingAnalysis(versions, BATCH)
@@ -124,16 +133,20 @@ export class Analysis {
         }
         for (const photo of batch) await this.analyse(photo, faces, content)
       }
+    } catch (e) {
+      if (!(e instanceof ContentModelUnavailable)) throw e
+      modelFailed = true
+      this.unavailable(e)
     } finally {
       if (facesTouched) this.o.people.finished()
-      if (content) {
+      if (content && !modelFailed) {
         this.emit({ phase: 'idle', upgrading: false }, true)
         await content.releaseImageEncoder()
       }
     }
   }
 
-  private async analyse(photo: AnalysisSource, faces: FaceAnalyser | null, content: ContentModel | null): Promise<void> {
+  private async analyse(photo: AnalysisSource, faces: FaceAnalyser | null, content: ContentEncoder | null): Promise<void> {
     const forFaces = !!faces && photo.needsFaces
     const image = await this.decode(photo, forFaces)
     if (forFaces) {
@@ -149,8 +162,10 @@ export class Analysis {
       let vector: Float32Array | null = null
       try {
         if (image) vector = await content.embedImage(image)
-      } catch {
-        // unreadable: recorded without a vector so it isn't retried every time
+      } catch (e) {
+        // The model itself failing isn't this photo's fault: stop, without recording it.
+        if (e instanceof ContentModelUnavailable) throw e
+        // Otherwise unreadable: recorded without a vector so it isn't retried every time.
       }
       this.o.db.saveContent(photo.id, vector, CONTENT_MODEL_VERSION)
       const now = Date.now()

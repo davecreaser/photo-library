@@ -38,15 +38,15 @@ Done when every acceptance criterion is implemented and `npm run typecheck && np
 
 ## 5. Review (reviewer agent)
 
-Dispatch the **reviewer** agent with the spec path and base branch `main`. Fix every blocking and should-fix finding (or record in the spec why not), then re-run the reviewer until the verdict is ready.
+Dispatch the **reviewer** agent once with the spec path and base branch `main`. Fix every blocking and should-fix finding (or record in the spec why not). Re-run the reviewer only if the first pass found something **blocking**, and then only on the fixes. Usage is limited: one careful pass beats several shallow ones.
 
-Done when the reviewer's verdict is ready.
+Done when blocking findings are fixed (and, if there were any, a second pass on the fixes says ready).
 
 ## 6. QA (qa agent)
 
-Dispatch the **qa** agent with the spec path. Fix every failing criterion and every bug it ranks above nit; re-run QA until every criterion passes.
+Dispatch the **qa** agent once with the spec path. Fix every failing criterion and every bug it ranks above nit, then re-run only the affected tests yourself.
 
-Done when the QA table shows every acceptance criterion passing with named evidence.
+Done when every acceptance criterion passes with named evidence.
 
 ## 7. Pull request
 

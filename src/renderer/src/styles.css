@@ -980,3 +980,41 @@ button.primary-small {
 .empty p {
   margin: 0 0 6px;
 }
+
+/* New photos for an album (spec 0003) */
+.offers {
+  margin-bottom: 24px;
+}
+.offer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.offer-row img {
+  width: 72px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--panel-2);
+  flex: none;
+}
+.offer-text {
+  flex: 1;
+  min-width: 0;
+}
+.offer-row .offer-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.offer-row .offer-actions .primary-small {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Album,
+  AlbumOffer,
   ClockSuggestion,
   ContentProgress,
   FaceProgress,
@@ -18,7 +19,7 @@ import { PhotoGrid } from './components/PhotoGrid.tsx'
 import { Viewer } from './components/Viewer.tsx'
 import { SelectionBar } from './components/SelectionBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
-import { SuggestionsView, suggestionMeta, type SuggestionNotice } from './components/SuggestionsView.tsx'
+import { SuggestionsView, newPhotosTitle, offerMeta, suggestionMeta, type SuggestionNotice } from './components/SuggestionsView.tsx'
 import { DismissedDialog } from './components/DismissedDialog.tsx'
 import { ClockBanner } from './components/ClockBanner.tsx'
 import { CorrectionsDialog } from './components/CorrectionsDialog.tsx'
@@ -34,6 +35,7 @@ export type View =
   | { kind: 'favorites' }
   | { kind: 'suggestions' }
   | { kind: 'suggestion'; id: string }
+  | { kind: 'albumOffer'; albumId: number }
   | { kind: 'undated' }
   | { kind: 'people' }
   | { kind: 'person'; id: number; reviewing?: boolean }
@@ -54,6 +56,7 @@ export function App() {
   const [tags, setTags] = useState<Tag[]>([])
   const [timeline, setTimeline] = useState<TimelineMonth[]>([])
   const [suggestedList, setSuggestedList] = useState<SuggestedAlbum[] | null>(null)
+  const [offers, setOffers] = useState<AlbumOffer[]>([])
   const [suggestionsFailed, setSuggestionsFailed] = useState(false)
   const suggested = suggestedList ?? []
   // Decisions (accept/dismiss) run one at a time, in order.
@@ -80,9 +83,10 @@ export function App() {
 
   const refreshSidebar = useCallback(async () => {
     // Suggestions load on their own, so a failure there doesn't break the rest of the sidebar.
-    void Promise.all([api.getSuggestions(), api.getMinBurstSize(), api.getDismissedCount()]).then(
-      ([sg, min, dismissed]) => {
+    void Promise.all([api.getSuggestions(), api.getMinBurstSize(), api.getDismissedCount(), api.getAlbumOffers()]).then(
+      ([sg, min, dismissed, of]) => {
         setSuggestedList(sg)
+        setOffers(of)
         setMinBurstSizeState(min)
         setDismissedCount(dismissed)
         setSuggestionsFailed(false)
@@ -170,6 +174,8 @@ export function App() {
         return { favorites: true }
       case 'suggestion':
         return { suggestionId: view.id }
+      case 'albumOffer':
+        return { offerAlbumId: view.albumId }
       case 'undated':
         return { undated: true }
       case 'year':
@@ -186,6 +192,8 @@ export function App() {
   }, [view])
 
   const currentSuggestion = view.kind === 'suggestion' ? suggested.find((e) => e.id === view.id) : undefined
+
+  const currentOffer = view.kind === 'albumOffer' ? offers.find((o) => o.albumId === view.albumId) : undefined
 
   /**
    * Runs decisions one after another (a second one made while the first is in flight waits its
@@ -220,7 +228,27 @@ export function App() {
       const decisionIds = await api.dismissSuggestions(ids)
       setNotice({ kind: 'dismissed', label, decisionIds })
     })
+  const addOffer = (albumId: number) =>
+    decide(async () => {
+      const albumName = offers.find((o) => o.albumId === albumId)?.albumName ?? 'album'
+      const count = await api.acceptAlbumOffer(albumId)
+      setNotice({ kind: 'offerAdded', albumId, albumName, count })
+    })
+  const declineOffer = (albumId: number) =>
+    decide(async () => {
+      const albumName = offers.find((o) => o.albumId === albumId)?.albumName ?? 'album'
+      const photoIds = await api.declineAlbumOffer(albumId)
+      setNotice({ kind: 'offerDeclined', albumId, albumName, photoIds })
+    })
   const undoDismiss = async () => {
+    if (notice?.kind === 'offerDeclined') {
+      const { albumId, photoIds } = notice
+      await decide(async () => {
+        await api.undoDeclineAlbumOffer(albumId, photoIds)
+        setNotice(null)
+      }).catch(() => {})
+      return
+    }
     if (notice?.kind !== 'dismissed') return
     const ids = notice.decisionIds
     // Queued with other decisions, so it never races a dismissal still in flight.
@@ -241,6 +269,8 @@ export function App() {
         return 'Suggested albums'
       case 'suggestion':
         return currentSuggestion?.name ?? 'Suggested album'
+      case 'albumOffer':
+        return currentOffer ? `New photos for ${currentOffer.albumName}` : 'New photos'
       case 'undated':
         return 'Undated'
       case 'people':
@@ -315,7 +345,7 @@ export function App() {
         albums={albums}
         tags={tags}
         timeline={timeline}
-        suggestionCount={library.photoCount > 0 ? suggested.length : 0}
+        suggestionCount={library.photoCount > 0 ? suggested.length + offers.length : 0}
         people={people}
         faceProgress={faceProgress}
         onNavigate={navigate}
@@ -351,6 +381,7 @@ export function App() {
           <div className="title-block">
             <h1>{title}</h1>
             {currentSuggestion && <div className="subtitle">{suggestionMeta(currentSuggestion)}</div>}
+            {currentOffer && <div className="subtitle">{offerMeta(currentOffer)}</div>}
           </div>
           {currentPerson &&
             view.kind === 'person' &&
@@ -434,6 +465,33 @@ export function App() {
               )}
             </div>
           )}
+          {currentOffer && selected.size === 0 && (
+            <div className="header-actions">
+              <button
+                className="primary-small"
+                title={`Adds these ${currentOffer.count.toLocaleString()} photos to the album ${currentOffer.albumName}. Nothing is moved or changed on disk.`}
+                onClick={async () => {
+                  try {
+                    await addOffer(currentOffer.albumId)
+                    navigate({ kind: 'album', id: currentOffer.albumId }, true)
+                  } catch {
+                    /* the error is shown */
+                  }
+                }}
+              >
+                Add to {currentOffer.albumName}
+              </button>
+              <button
+                title={`Stop offering these photos for ${currentOffer.albumName}.`}
+                onClick={async () => {
+                  await declineOffer(currentOffer.albumId).catch(() => {})
+                  navigate({ kind: 'suggestions' }, true)
+                }}
+              >
+                Not these
+              </button>
+            </div>
+          )}
           {selected.size > 0 && (
             <SelectionBar
               selected={[...selected]}
@@ -462,6 +520,10 @@ export function App() {
         ) : view.kind === 'suggestions' ? (
           <SuggestionsView
             suggestions={suggestedList}
+            offers={offers}
+            onOpenOffer={(albumId) => navigate({ kind: 'albumOffer', albumId }, true)}
+            onAddOffer={(albumId) => void addOffer(albumId).catch(() => {})}
+            onDeclineOffer={(albumId) => void declineOffer(albumId).catch(() => {})}
             loadError={suggestionsFailed}
             onRetry={refreshAll}
             minBurstSize={minBurstSize}
@@ -486,6 +548,13 @@ export function App() {
             }}
             onShowDismissed={() => setShowDismissed(true)}
           />
+        ) : view.kind === 'albumOffer' && !currentOffer ? (
+          <div className="grid-scroller">
+            <div className="empty">
+              <p>These photos have been dealt with.</p>
+              <button onClick={() => navigate({ kind: 'suggestions' })}>Back to Suggested albums</button>
+            </div>
+          </div>
         ) : view.kind === 'suggestion' && !currentSuggestion ? (
           <div className="grid-scroller">
             <div className="empty">

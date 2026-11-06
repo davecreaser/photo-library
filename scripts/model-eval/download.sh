@@ -33,5 +33,6 @@ fetch nomic-ai/nomic-embed-text-v1.5 config.json tokenizer.json tokenizer_config
 mkdir -p "$CACHE/coco"
 cd "$CACHE/coco"
 [ -d val2017 ] || { echo "↓ COCO val2017 images"; curl -sSfL -C - -o val2017.zip http://images.cocodataset.org/zips/val2017.zip && unzip -q val2017.zip && rm val2017.zip; }
-[ -f annotations/captions_val2017.json ] || { echo "↓ COCO captions"; curl -sSfL -C - -o ann.zip http://images.cocodataset.org/annotations/annotations_trainval2017.zip && unzip -q -o ann.zip 'annotations/captions_val2017.json' && rm ann.zip; }
+# Captions (benchmark) and object labels (calibrate.mjs: the content-match threshold).
+[ -f annotations/captions_val2017.json ] && [ -f annotations/instances_val2017.json ] || { echo "↓ COCO captions and labels"; curl -sSfL -C - -o ann.zip http://images.cocodataset.org/annotations/annotations_trainval2017.zip && unzip -q -o ann.zip 'annotations/captions_val2017.json' 'annotations/instances_val2017.json' && rm ann.zip; }
 echo "done: $(du -sh "$CACHE" | cut -f1) in $CACHE"

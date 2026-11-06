@@ -29,13 +29,16 @@ const MODELS = join(import.meta.dirname, '..', 'resources', 'models')
 const COLOURS = { red: '#d42020', blue: '#2040d4' }
 let n = 0
 
-/** A distinct generated photo of one colour (a small mark makes each file's content unique). */
+/**
+ * A generated photo of one plain colour. Each file is still a distinct photo: its EXIF
+ * description differs (the content hash covers the whole file), while its pixels, and so its
+ * scores, are the same as every other photo of that colour.
+ */
 async function makePhoto(path: string, colour: keyof typeof COLOURS, date: string | null) {
   const staging = join(mkdtempSync(join(tmpdir(), 'stage-')), 'p.jpg')
-  const i = n++
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="${COLOURS[colour]}"/><rect x="${4 + (i % 50) * 2}" y="4" width="6" height="6" fill="#888"/></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="${COLOURS[colour]}"/></svg>`
   await sharp(Buffer.from(svg))
-    .withExif(date ? { IFD2: { DateTimeOriginal: date } } : {})
+    .withExif({ IFD0: { ImageDescription: `test photo ${n++}` }, ...(date ? { IFD2: { DateTimeOriginal: date } } : {}) })
     .jpeg()
     .toFile(staging)
   userFs.mv(staging, path)

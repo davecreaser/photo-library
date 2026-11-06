@@ -310,9 +310,9 @@ test('suggests and applies the camera clock fix, virtually', async () => {
   assert.equal(db.queryPhotos({ text: 'june 2026' }).total, 1, '2025-06 became 2026-06')
   assert.equal(db.queryPhotos({ text: 'july 2026' }).total, 1, 'after the fix: unchanged')
 
-  const events = organiser.listEvents()
-  assert.ok(events.some((e) => e.name === 'Sail Amsterdam') && events.some((e) => e.name === 'Poland'))
-  const album = organiser.saveEventAsAlbum(events.find((e) => e.name === 'Poland')!.id, 'Poland 2025')
+  const suggested = organiser.listSuggestions()
+  assert.ok(suggested.some((e) => e.name === 'Sail Amsterdam') && suggested.some((e) => e.name === 'Poland'))
+  const album = organiser.acceptSuggestions([suggested.find((e) => e.name === 'Poland')!.id], 'Poland 2025')
   assert.equal(db.queryPhotos({ albumId: album.id }).total, 1)
 
   // Undo restores the camera's dates.

@@ -69,20 +69,65 @@ test('the camera clock fix is suggested and corrects dates (inside the app only)
   await expect(page.locator('.grid .tile')).toHaveCount(4)
 })
 
-test('a trip split over several days can be merged into one event', async () => {
+test('suggested albums: named folders at any size; small bursts only once the minimum is lowered; combine a split trip', async () => {
   await chooseLibrary()
-  await nav('Events & trips').click()
+  await nav('Suggested albums').click()
+  const cards = page.locator('.event-card')
+  // Named folders (any size), and no one-photo bursts at the default minimum of 20.
+  await expect(cards.locator('.event-name')).toHaveText(['Poland', 'Sail Amsterdam', 'House Listing'])
+
+  // Lower the minimum: the three one-photo days of the holiday appear (AC-10).
+  await page.locator('#min-burst-size').fill('1')
+  await page.locator('#min-burst-size').press('Enter')
   const days = page.locator('.event-card', { hasText: /(Jul|Aug) 2026/ })
   await expect(days).toHaveCount(3)
+
+  // Combine them into one album (AC-4).
   for (const card of await days.all()) await card.click({ modifiers: ['ControlOrMeta'] })
-  await page.getByRole('button', { name: 'Merge into one trip' }).click()
-  await page.locator('.inline-input').fill('Norway')
-  await page.locator('.inline-input').press('Enter')
+  await page.getByRole('button', { name: 'Combine into one album' }).click()
+  await page.getByPlaceholder('Album name, e.g. Norway').fill('Norway')
+  await page.getByPlaceholder('Album name, e.g. Norway').press('Enter')
+  await expect(page.locator('.merge-bar')).toContainText('Made album “Norway” with 3 photos from 3 suggestions.')
+  await expect(days).toHaveCount(0)
+  await page.getByRole('button', { name: 'Open album' }).click()
   await expect(page.locator('h1')).toHaveText('Norway')
   await expect(page.locator('.grid .tile')).toHaveCount(3)
+})
 
-  await nav('Events & trips').click()
-  await expect(page.locator('.event-card', { hasText: 'Norway' })).toHaveCount(1)
+test('suggested albums: dismiss with undo, and restore from the dismissed list', async () => {
+  await chooseLibrary()
+  await nav('Suggested albums').click()
+  const poland = page.locator('.event-card', { hasText: 'Poland' })
+  await poland.hover()
+  await poland.getByRole('button', { name: 'Dismiss' }).click()
+  await expect(poland).toHaveCount(0)
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(poland).toHaveCount(1)
+
+  await poland.hover()
+  await poland.getByRole('button', { name: 'Dismiss' }).click()
+  await page.getByRole('button', { name: 'Dismissed (1)…' }).click()
+  await expect(page.locator('.modal')).toContainText('Poland')
+  await page.locator('.modal').getByRole('button', { name: 'Restore' }).click()
+  await page.locator('.modal').getByRole('button', { name: 'Done' }).click()
+  await expect(poland).toHaveCount(1)
+})
+
+test('suggested albums: accept one, and deleting its album brings it back', async () => {
+  await chooseLibrary()
+  await nav('Suggested albums').click()
+  const sail = page.locator('.event-card', { hasText: 'Sail Amsterdam' })
+  await sail.hover()
+  await sail.getByRole('button', { name: 'Make album' }).click()
+  await page.locator('.event-card .inline-input').press('Enter')
+  await expect(sail).toHaveCount(0)
+  const album = page.locator('.sidebar .nav-item.album', { hasText: 'Sail Amsterdam' })
+  await expect(album).toContainText('4')
+  await album.hover()
+  await album.getByTitle('Delete album').click()
+  await expect(page.locator('.sidebar .confirm')).toContainText('it goes back to Suggested albums')
+  await page.locator('.sidebar .confirm').getByRole('button', { name: 'Delete' }).click()
+  await expect(sail).toHaveCount(1)
 })
 
 test('ignoring a folder removes its photos from the library', async () => {

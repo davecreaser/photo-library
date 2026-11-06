@@ -39,6 +39,8 @@ export interface Album {
   parentId: number | null
   name: string
   photoCount: number
+  /** True when made from suggested albums (deleting it brings them back). */
+  fromSuggestion?: boolean
 }
 
 export interface Tag {
@@ -53,18 +55,28 @@ export interface TimelineMonth {
   count: number
 }
 
-/** An automatically detected event or trip. Recomputed after every scan; save it as an album to keep it. */
-export interface PhotoEvent {
+/** A group of photos proposed as an album (spec 0001): a named folder or a burst of photos taken together. */
+export interface SuggestedAlbum {
   id: string
   name: string
-  /** True when the name came from your folder names (or you) rather than the date. */
+  /** True when it comes from a named folder; bursts are named by their dates. */
   named: boolean
-  /** True when you merged or renamed it (can be undone). */
-  custom: boolean
   start: string | null
   end: string | null
   count: number
   coverId: number
+}
+
+export interface DismissedSuggestion {
+  /** The dismissal's id (pass to restoreSuggestions). */
+  id: number
+  name: string
+  photoCount: number
+  start: string | null
+  end: string | null
+  coverId: number | null
+  /** Why it wouldn't be listed even if restored, if so. */
+  note: 'below-minimum' | 'in-album' | null
 }
 
 export interface Person {
@@ -122,7 +134,7 @@ export interface PhotoFilter {
   month?: string
   albumId?: number
   tagId?: number
-  eventId?: string
+  suggestionId?: string
   favorites?: boolean
   personId?: number
   undated?: boolean
@@ -182,7 +194,17 @@ export interface Api {
   queryPhotos(filter: PhotoFilter): Promise<PhotoPage>
   getPhoto(id: number): Promise<PhotoDetails | null>
   getTimeline(): Promise<TimelineMonth[]>
-  getEvents(): Promise<PhotoEvent[]>
+  getSuggestions(): Promise<SuggestedAlbum[]>
+  /** Makes one album from one or more suggestions (accept, or combine several). */
+  acceptSuggestions(ids: string[], name: string): Promise<Album>
+  /** Returns the dismissal ids, for undo. */
+  dismissSuggestions(ids: string[]): Promise<number[]>
+  /** Undo a dismissal, or restore one from the dismissed list. */
+  restoreSuggestions(dismissalIds: number[]): Promise<void>
+  getDismissedSuggestions(): Promise<DismissedSuggestion[]>
+  getMinBurstSize(): Promise<number>
+  /** False if the value isn't a whole number from 1 to 1,000 (nothing changes). */
+  setMinBurstSize(n: number): Promise<boolean>
   revealInFinder(id: number): Promise<void>
   setFavorite(photoIds: number[], favorite: boolean): Promise<void>
 
@@ -200,12 +222,6 @@ export interface Api {
   deleteAlbum(id: number): Promise<void>
   addToAlbum(albumId: number, photoIds: number[]): Promise<void>
   removeFromAlbum(albumId: number, photoIds: number[]): Promise<void>
-  /** Merges events into one trip (or renames one, given a single id). Returns the merged event's id. */
-  mergeEvents(eventIds: string[], name: string): Promise<string>
-  /** Undoes a merge/rename. */
-  ungroupEvent(eventId: string): Promise<void>
-  /** Turns an automatic event into a permanent album. */
-  saveEventAsAlbum(eventId: string, name: string): Promise<Album>
 
   getPeople(): Promise<Person[]>
   getFaceGroups(): Promise<FaceGroup[]>

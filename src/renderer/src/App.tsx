@@ -6,9 +6,9 @@ import type {
   LibraryInfo,
   Person,
   Photo,
-  PhotoEvent,
   PhotoFilter,
   ScanProgress,
+  SuggestedAlbum,
   Tag,
   TimelineMonth
 } from '../../shared/types.ts'
@@ -17,20 +17,21 @@ import { PhotoGrid } from './components/PhotoGrid.tsx'
 import { Viewer } from './components/Viewer.tsx'
 import { SelectionBar } from './components/SelectionBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
-import { EventsView } from './components/EventsView.tsx'
+import { SuggestionsView, suggestionMeta, type SuggestionNotice } from './components/SuggestionsView.tsx'
+import { DismissedDialog } from './components/DismissedDialog.tsx'
 import { ClockBanner } from './components/ClockBanner.tsx'
 import { CorrectionsDialog } from './components/CorrectionsDialog.tsx'
 import { IgnoredFoldersDialog } from './components/IgnoredFoldersDialog.tsx'
 import { InlineInput } from './components/InlineInput.tsx'
 import { PeopleView } from './components/PeopleView.tsx'
 import { PersonFaces } from './components/PersonFaces.tsx'
-import { formatRange, monthName } from './format.ts'
+import { monthName } from './format.ts'
 
 export type View =
   | { kind: 'all' }
   | { kind: 'favorites' }
-  | { kind: 'events' }
-  | { kind: 'event'; id: string }
+  | { kind: 'suggestions' }
+  | { kind: 'suggestion'; id: string }
   | { kind: 'undated' }
   | { kind: 'people' }
   | { kind: 'person'; id: number; reviewing?: boolean }
@@ -50,15 +51,19 @@ export function App() {
   const [albums, setAlbums] = useState<Album[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [timeline, setTimeline] = useState<TimelineMonth[]>([])
-  const [events, setEvents] = useState<PhotoEvent[]>([])
+  const [suggested, setSuggested] = useState<SuggestedAlbum[]>([])
+  const [minBurstSize, setMinBurstSizeState] = useState(20)
+  const [dismissedCount, setDismissedCount] = useState(0)
+  const [notice, setNotice] = useState<SuggestionNotice>(null)
+  const [showDismissed, setShowDismissed] = useState(false)
+  const [namingSuggestion, setNamingSuggestion] = useState(false)
+  const [emptySuggestionName, setEmptySuggestionName] = useState(false)
   const [suggestions, setSuggestions] = useState<ClockSuggestion[]>([])
   const [photos, setPhotos] = useState<Photo[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
   const [showCorrections, setShowCorrections] = useState(false)
   const [showIgnored, setShowIgnored] = useState(false)
-  const [savingEvent, setSavingEvent] = useState(false)
-  const [renamingEvent, setRenamingEvent] = useState(false)
   const [people, setPeople] = useState<Person[]>([])
   const [faceProgress, setFaceProgress] = useState<FaceProgress | null>(null)
   const [renamingPerson, setRenamingPerson] = useState(false)
@@ -67,21 +72,25 @@ export function App() {
   const [version, setVersion] = useState(0)
 
   const refreshSidebar = useCallback(async () => {
-    const [lib, a, t, tl, ev, s, pe] = await Promise.all([
+    const [lib, a, t, tl, sg, s, pe, min, dismissed] = await Promise.all([
       api.getLibrary(),
       api.listAlbums(),
       api.listTags(),
       api.getTimeline(),
-      api.getEvents(),
+      api.getSuggestions(),
       api.getClockSuggestions(),
-      api.getPeople()
+      api.getPeople(),
+      api.getMinBurstSize(),
+      api.getDismissedSuggestions()
     ])
     setPeople(pe)
+    setSuggested(sg)
+    setMinBurstSizeState(min)
+    setDismissedCount(dismissed.length)
     setLibrary(lib)
     setAlbums(a)
     setTags(t)
     setTimeline(tl)
-    setEvents(ev)
     setSuggestions(s)
   }, [])
 
@@ -123,12 +132,13 @@ export function App() {
     return () => clearTimeout(t)
   }, [search])
 
-  const navigate = (v: View) => {
+  /** `keepNotice` keeps the suggestion notice (Undo / Open album) when returning to the list. */
+  const navigate = (v: View, keepNotice = false) => {
     if (v.kind !== 'search') setSearch('')
     setView(v)
     setSelected(new Set())
-    setSavingEvent(false)
-    setRenamingEvent(false)
+    if (!keepNotice) setNotice(null)
+    setNamingSuggestion(false)
     setRenamingPerson(false)
     setConfirmForgetPerson(false)
   }
@@ -136,15 +146,15 @@ export function App() {
   const filter: PhotoFilter = useMemo(() => {
     switch (view.kind) {
       case 'all':
-      case 'events':
+      case 'suggestions':
       case 'people':
         return {}
       case 'person':
         return { personId: view.id }
       case 'favorites':
         return { favorites: true }
-      case 'event':
-        return { eventId: view.id }
+      case 'suggestion':
+        return { suggestionId: view.id }
       case 'undated':
         return { undated: true }
       case 'year':
@@ -160,7 +170,26 @@ export function App() {
     }
   }, [view])
 
-  const currentEvent = view.kind === 'event' ? events.find((e) => e.id === view.id) : undefined
+  const currentSuggestion = view.kind === 'suggestion' ? suggested.find((e) => e.id === view.id) : undefined
+
+  const acceptSuggestions = async (ids: string[], name: string) => {
+    const album = await api.acceptSuggestions(ids, name)
+    setNotice({ kind: 'made', album, sources: ids.length })
+    refreshAll()
+    return album
+  }
+  const dismissSuggestions = async (ids: string[]) => {
+    const label = ids.length === 1 ? `Dismissed “${suggested.find((s) => s.id === ids[0])?.name ?? 'suggestion'}”.` : `Dismissed ${ids.length} suggestions.`
+    const decisionIds = await api.dismissSuggestions(ids)
+    setNotice({ kind: 'dismissed', label, decisionIds })
+    refreshAll()
+  }
+  const undoDismiss = async () => {
+    if (notice?.kind !== 'dismissed') return
+    await api.restoreSuggestions(notice.decisionIds)
+    setNotice(null)
+    refreshAll()
+  }
   const currentPerson = view.kind === 'person' ? people.find((p) => p.id === view.id) : undefined
 
   const title = (() => {
@@ -169,10 +198,10 @@ export function App() {
         return 'All photos'
       case 'favorites':
         return 'Favourites'
-      case 'events':
-        return 'Events & trips'
-      case 'event':
-        return currentEvent?.name ?? 'Event'
+      case 'suggestions':
+        return 'Suggested albums'
+      case 'suggestion':
+        return currentSuggestion?.name ?? 'Suggested album'
       case 'undated':
         return 'Undated'
       case 'people':
@@ -245,7 +274,7 @@ export function App() {
         albums={albums}
         tags={tags}
         timeline={timeline}
-        eventCount={events.length}
+        suggestionCount={library.photoCount > 0 ? suggested.length : 0}
         people={people}
         faceProgress={faceProgress}
         onNavigate={navigate}
@@ -280,7 +309,7 @@ export function App() {
         <div className="content-header">
           <div className="title-block">
             <h1>{title}</h1>
-            {currentEvent && <div className="subtitle">{formatRange(currentEvent.start, currentEvent.end)}</div>}
+            {currentSuggestion && <div className="subtitle">{suggestionMeta(currentSuggestion)}</div>}
           </div>
           {currentPerson &&
             view.kind === 'person' &&
@@ -320,49 +349,45 @@ export function App() {
                 <button onClick={() => setConfirmForgetPerson(true)}>Forget name…</button>
               </div>
             ))}
-          {currentEvent && renamingEvent && (
-            <InlineInput
-              initial={currentEvent.name}
-              onSubmit={async (name) => {
-                const id = await api.mergeEvents([currentEvent.id], name)
-                setRenamingEvent(false)
-                await refreshSidebar()
-                navigate({ kind: 'event', id })
-              }}
-              onCancel={() => setRenamingEvent(false)}
-            />
-          )}
-          {currentEvent && !savingEvent && !renamingEvent && selected.size === 0 && (
+          {currentSuggestion && selected.size === 0 && (
             <div className="header-actions">
-              <button onClick={() => setRenamingEvent(true)}>Rename</button>
-              {currentEvent.custom && (
-                <button
-                  title="Split back into the automatically detected events"
-                  onClick={async () => {
-                    await api.ungroupEvent(currentEvent.id)
-                    await refreshSidebar()
-                    navigate({ kind: 'events' })
-                  }}
-                >
-                  Undo merge/rename
-                </button>
+              {namingSuggestion ? (
+                <>
+                  <InlineInput
+                    initial={currentSuggestion.name}
+                    onSubmit={async (name) => {
+                      const album = await acceptSuggestions([currentSuggestion.id], name)
+                      navigate({ kind: 'album', id: album.id })
+                    }}
+                    onEmpty={() => setEmptySuggestionName(true)}
+                    onCancel={() => setNamingSuggestion(false)}
+                  />
+                  <span className="hint">{emptySuggestionName ? 'An album needs a name.' : 'Enter to make the album, Esc to cancel'}</span>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="primary-small"
+                    title={`Make a new album with these ${currentSuggestion.count.toLocaleString()} photos`}
+                    onClick={() => {
+                      setEmptySuggestionName(false)
+                      setNamingSuggestion(true)
+                    }}
+                  >
+                    Make album
+                  </button>
+                  <button
+                    title="Stop suggesting this. Photos aren't moved or changed."
+                    onClick={async () => {
+                      await dismissSuggestions([currentSuggestion.id])
+                      navigate({ kind: 'suggestions' }, true)
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </>
               )}
-              <button onClick={() => setSavingEvent(true)} title="Keep this event as a permanent album">
-                Save as album
-              </button>
             </div>
-          )}
-          {currentEvent && savingEvent && (
-            <InlineInput
-              initial={currentEvent.name}
-              onSubmit={async (name) => {
-                const album = await api.saveEventAsAlbum(currentEvent.id, name)
-                setSavingEvent(false)
-                refreshAll()
-                navigate({ kind: 'album', id: album.id })
-              }}
-              onCancel={() => setSavingEvent(false)}
-            />
           )}
           {selected.size > 0 && (
             <SelectionBar
@@ -389,16 +414,38 @@ export function App() {
           />
         ) : view.kind === 'person' && view.reviewing && currentPerson ? (
           <PersonFaces person={currentPerson} onChanged={refreshAll} />
-        ) : view.kind === 'events' ? (
-          <EventsView
-            events={events}
-            onOpen={(id) => navigate({ kind: 'event', id })}
-            onMerge={async (ids, name) => {
-              const id = await api.mergeEvents(ids, name)
-              await refreshSidebar()
-              navigate({ kind: 'event', id })
+        ) : view.kind === 'suggestions' ? (
+          <SuggestionsView
+            suggestions={suggested}
+            minBurstSize={minBurstSize}
+            dismissedCount={dismissedCount}
+            scanned={library.photoCount > 0 || scan?.phase === 'done'}
+            scanning={scanning}
+            notice={notice}
+            onOpen={(id) => navigate({ kind: 'suggestion', id }, true)}
+            onAccept={async (ids, name) => {
+              await acceptSuggestions(ids, name)
             }}
+            onDismiss={(ids) => void dismissSuggestions(ids)}
+            onUndo={() => void undoDismiss()}
+            onOpenAlbum={(id) => navigate({ kind: 'album', id })}
+            onSetMinBurstSize={async (n) => {
+              const ok = await api.setMinBurstSize(n)
+              if (ok) {
+                setNotice(null)
+                refreshAll()
+              }
+              return ok
+            }}
+            onShowDismissed={() => setShowDismissed(true)}
           />
+        ) : view.kind === 'suggestion' && !currentSuggestion ? (
+          <div className="grid-scroller">
+            <div className="empty">
+              <p>This suggestion is no longer here.</p>
+              <button onClick={() => navigate({ kind: 'suggestions' })}>Back to Suggested albums</button>
+            </div>
+          </div>
         ) : (
           <PhotoGrid filter={filter} version={version} selected={selected} onSelectionChange={setSelected} onPhotosLoaded={setPhotos} onOpen={setViewerIndex} />
         )}
@@ -419,6 +466,7 @@ export function App() {
 
       {showCorrections && <CorrectionsDialog onClose={() => setShowCorrections(false)} onChanged={refreshAll} />}
       {showIgnored && <IgnoredFoldersDialog onClose={() => setShowIgnored(false)} onChanged={refreshAll} />}
+      {showDismissed && <DismissedDialog minBurstSize={minBurstSize} onClose={() => setShowDismissed(false)} onChanged={refreshAll} />}
     </div>
   )
 }

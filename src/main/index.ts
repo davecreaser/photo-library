@@ -194,7 +194,9 @@ function registerIpc(): void {
     await cleanUpCaches(forgotten)
   })
 
-  ipcMain.handle('photos:query', (_e, filter: PhotoFilter) => db.queryPhotos(filter, filter.eventId ? organiser.eventPhotoIds(filter.eventId) : undefined))
+  ipcMain.handle('photos:query', (_e, filter: PhotoFilter) =>
+    db.queryPhotos(filter, filter.suggestionId ? organiser.suggestionPhotoIds(filter.suggestionId) : undefined)
+  )
   ipcMain.handle('photos:get', (_e, id: number) => db.getPhoto(id))
   ipcMain.handle('photos:timeline', () => db.getTimeline())
   ipcMain.handle('photos:reveal', (_e, id: number) => {
@@ -205,10 +207,14 @@ function registerIpc(): void {
     db.setFavorite(ids, favorite)
     organiser.invalidate()
   })
-  ipcMain.handle('events:list', () => organiser.listEvents())
-  ipcMain.handle('events:merge', (_e, ids: string[], name: string) => organiser.mergeEvents(ids, name))
-  ipcMain.handle('events:ungroup', (_e, id: string) => organiser.ungroupEvent(id))
-  ipcMain.handle('events:saveAsAlbum', (_e, eventId: string, name: string) => organiser.saveEventAsAlbum(eventId, name))
+
+  ipcMain.handle('suggestions:list', () => organiser.listSuggestions())
+  ipcMain.handle('suggestions:accept', (_e, ids: string[], name: string) => organiser.acceptSuggestions(ids, name))
+  ipcMain.handle('suggestions:dismiss', (_e, ids: string[]) => organiser.dismissSuggestions(ids))
+  ipcMain.handle('suggestions:restore', (_e, ids: number[]) => organiser.restoreDismissed(ids))
+  ipcMain.handle('suggestions:dismissed', () => organiser.listDismissed())
+  ipcMain.handle('suggestions:getMin', () => organiser.getMinBurstSize())
+  ipcMain.handle('suggestions:setMin', (_e, n: number) => organiser.setMinBurstSize(n))
 
   ipcMain.handle('clock:suggestions', () => organiser.suggestions())
   ipcMain.handle('clock:apply', (_e, key: string) => organiser.applySuggestion(key))

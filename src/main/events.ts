@@ -25,7 +25,7 @@ export interface DetectedEvent {
   id: string
   name: string
   named: boolean
-  /** Set when this event is a user's merge/rename (so it can be undone). */
+  /** Set when this group comes from a pre-0001 user merge (only used to convert merges into albums). */
   groupId?: number
   start: string | null
   end: string | null
@@ -73,8 +73,11 @@ export function detectEvents(photos: EventInput[]): DetectedEvent[] {
   const loose: EventInput[] = []
   for (const p of photos) {
     const name = bestName(p.dirs)
-    if (name) named.set(name, [...(named.get(name) ?? []), p])
-    else if (p.takenAt) loose.push(p)
+    if (name) {
+      const list = named.get(name)
+      if (list) list.push(p)
+      else named.set(name, [p])
+    } else if (p.takenAt) loose.push(p)
     // Undated photos in generic folders have nothing to group them by; they stay in "Undated".
   }
 

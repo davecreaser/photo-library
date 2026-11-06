@@ -10,7 +10,8 @@ interface Props {
   albums: Album[]
   tags: Tag[]
   timeline: TimelineMonth[]
-  eventCount: number
+  /** Suggested albums waiting; 0 hides the count. */
+  suggestionCount: number
   people: Person[]
   faceProgress: FaceProgress | null
   onNavigate: (v: View) => void
@@ -28,7 +29,7 @@ export function Sidebar({
   albums,
   tags,
   timeline,
-  eventCount,
+  suggestionCount,
   people,
   faceProgress,
   onNavigate,
@@ -74,7 +75,9 @@ export function Sidebar({
               />
             ) : confirmDelete === a.id ? (
               <div className="confirm" style={{ paddingLeft: 12 + depth * 14 }}>
-                <span>Delete album “{a.name}”? Photos stay on disk.</span>
+                <span>
+                  Delete album “{a.name}”? Photos stay on disk{a.fromSuggestion ? ', and it goes back to Suggested albums' : ''}.
+                </span>
                 <button
                   className="danger"
                   onClick={async () => {
@@ -138,9 +141,12 @@ export function Sidebar({
           <span className="label">★ Favourites</span>
           <span className="count">{library.favoriteCount.toLocaleString()}</span>
         </div>
-        <div className={`nav-item ${view.kind === 'events' || view.kind === 'event' ? 'active' : ''}`} onClick={() => onNavigate({ kind: 'events' })}>
-          <span className="label">🗓 Events & trips</span>
-          <span className="count">{eventCount}</span>
+        <div
+          className={`nav-item ${view.kind === 'suggestions' || view.kind === 'suggestion' ? 'active' : ''}`}
+          onClick={() => onNavigate({ kind: 'suggestions' })}
+        >
+          <span className="label">✨ Suggested albums</span>
+          <span className="count">{suggestionCount > 0 ? suggestionCount.toLocaleString() : ''}</span>
         </div>
         <div className={`nav-item ${view.kind === 'people' ? 'active' : ''}`} onClick={() => onNavigate({ kind: 'people' })}>
           <span className="label">👤 People</span>

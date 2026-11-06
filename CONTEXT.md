@@ -1,0 +1,86 @@
+# Photo Library
+
+A desktop app that organises a folder of camera photos without ever changing it: everything the user organises lives in the app, on top of the files.
+
+## Language
+
+### Photos and where they live
+
+**Photo folder**:
+The folder the user points the app at; everything below it is the library's source. Only ever read.
+_Avoid_: base path, root, import folder
+
+**Photo**:
+One image, identified by its content: identical files anywhere in the photo folder are the same photo.
+_Avoid_: image, file, asset, item
+
+**Copy**:
+One file on disk holding a photo's content. A photo has one or more copies; moving or renaming a copy doesn't change the photo.
+_Avoid_: duplicate (for the concept), location, instance
+
+**Missing photo**:
+A photo with no copy currently found in the photo folder. Hidden, but remembered with its albums, tags and names in case it comes back.
+_Avoid_: deleted photo
+
+**Ignored folder**:
+A folder the user excludes by name (anywhere) or by path (that folder only). Its photos are never part of the library.
+_Avoid_: excluded folder, private folder (that's just the default name)
+
+**Forget**:
+To remove what the app knows about a photo (its record, names, tags, thumbnails). Never affects files.
+_Avoid_: delete, remove (when talking about photos)
+
+### Time
+
+**Capture time**:
+When the photo was taken, as shown and searched: the recorded time after any clock correction.
+_Avoid_: date, timestamp, created date
+
+**Recorded time**:
+The time the camera wrote into the photo, which may be wrong if the camera's clock was.
+_Avoid_: EXIF date, original date
+
+**Clock correction**:
+A rule that shifts the recorded times of one camera's photos (optionally only those before a date) to give their capture times.
+_Avoid_: time fix, date offset
+
+**Undated photo**:
+A photo with no recorded time (e.g. a scan or a download). Never given a guessed date.
+
+### Organising
+
+**Album**:
+A named collection of photos made by the user; albums can contain albums. Adding a photo to an album never moves a file.
+_Avoid_: folder, virtual folder (in the UI), collection
+
+**Tag**:
+A free-text label on photos.
+_Avoid_: keyword, label
+
+**Favourite**:
+A photo the user has starred. Never inferred from folder names.
+_Avoid_: best, pick
+
+**Suggested album**:
+A group of photos the app proposes as an album, from a named folder or a burst of photos taken together. Accepting makes it an album; dismissing hides it for good.
+_Avoid_: event, trip, moment
+
+### People
+
+**Face**:
+One appearance of someone in a photo.
+
+**Person**:
+Someone the user has named. A person's photos are those with a face that is theirs.
+_Avoid_: contact, identity, subject
+
+**Face group**:
+Faces the app thinks belong to the same, not-yet-named person. Naming a face group makes it a person, or adds it to the person with that name.
+_Avoid_: cluster (in the UI), unknown person
+
+**Confirmed face**:
+A face the user has said belongs to a person, by naming its face group or the face itself.
+
+**Matched face**:
+A face the app has attributed to a person automatically because it looks like their confirmed faces. The user can reject it ("not this person"), and it won't be matched to them again.
+_Avoid_: auto-tagged, suggested face

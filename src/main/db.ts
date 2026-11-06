@@ -846,6 +846,11 @@ export class LibraryDb {
     return [...sets].map(([id, photoIds]) => ({ id, photoIds }))
   }
 
+  /** Capture times of photos currently missing (e.g. on an unplugged drive). */
+  missingCaptureTimes(): string[] {
+    return (this.db.prepare('SELECT taken_at FROM photos WHERE present = 0 AND taken_at IS NOT NULL').all() as Row[]).map((r) => r.taken_at as string)
+  }
+
   dismissedCount(): number {
     return (this.db.prepare("SELECT count(*) AS n FROM suggestion_decisions WHERE kind = 'dismissed'").get() as Row).n as number
   }

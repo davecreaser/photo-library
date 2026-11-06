@@ -28,7 +28,8 @@ export function InlineInput(props: {
         if (e.key === 'Enter' && !submitted.current) {
           if (value.trim()) {
             submitted.current = true
-            void Promise.resolve(props.onSubmit(value.trim())).catch(() => {
+            void Promise.resolve(props.onSubmit(value.trim())).catch((e: unknown) => {
+              console.error(e)
               submitted.current = false
             })
           } else props.onEmpty?.()

@@ -32,15 +32,16 @@ export class Organiser {
   /**
    * Before suggested albums, users could merge and rename events. Each merge not
    * already (mostly) saved as an album becomes one (spec 0001, AC-9). Run at startup.
-   * While some photos are missing (e.g. an unplugged drive), a merge is converted only once
-   * every event in it is found, so no partial album is made; otherwise it waits for a later run.
-   * With nothing missing, merges that can no longer be found are dropped.
+   * A merge waits (for a later launch) while any photo taken during it is missing, e.g. on an
+   * unplugged drive, so no partial album is made. Merges with nothing left to find are dropped.
    */
   convertOldMerges(): void {
     const merges = this.db.eventGroups()
     if (merges.length === 0) return
-    const somethingMissing = this.db.counts().missingCount > 0
-    const ids = new Set(this.groups().map((g) => g.id))
+    const missing = this.db.missingCaptureTimes()
+    const found = new Set(this.groups().map((g) => g.id))
+    const DAY = 86_400_000
+    const t = (iso: string) => new Date(iso + 'Z').getTime()
     this.db.transaction(() => {
       const albums = this.db.albumPhotoSets()
       const built = new Map(
@@ -49,9 +50,13 @@ export class Organiser {
           .map((e) => [e.groupId!, e])
       )
       for (const merge of merges) {
-        const complete = merge.members.every((m) => ids.has(m))
-        if (somethingMissing && !complete) continue
         const merged = built.get(merge.id)
+        // Merges record the dates they covered; without them, wait while any of its events can't be found.
+        const waiting =
+          merge.start && merge.end
+            ? missing.some((m) => t(m) >= t(merge.start!) - DAY && t(m) <= t(merge.end!) + DAY)
+            : missing.length > 0 && !merge.members.every((id) => found.has(id))
+        if (waiting) continue
         if (merged && selectSuggestions([merged], 1, [], albums).length > 0) {
           const album = this.db.createAlbum(merged.name, null)
           this.db.addToAlbum(album.id, merged.photoIds)
@@ -141,9 +146,9 @@ export class Organiser {
       const [best] = [...counts].sort((a, b) => b[1] - a[1])
       const group = best && best[1] * 2 >= groups[best[0]].photoIds.length ? groups[best[0]] : undefined
       let note: DismissedSuggestion['note'] = null
-      if (!group) note = 'not-here'
-      else if (!isCandidate(group, min)) note = 'below-minimum'
-      else if (selectSuggestions([group], min, [], albums).length === 0) note = 'in-album'
+      if (d.photoCount === 0) note = 'not-here'
+      else if (group && !isCandidate(group, min)) note = 'below-minimum'
+      else if (group && selectSuggestions([group], min, [], albums).length === 0) note = 'in-album'
       return { ...d, note }
     })
   }

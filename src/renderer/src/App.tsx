@@ -54,8 +54,8 @@ export function App() {
   const [suggestedList, setSuggestedList] = useState<SuggestedAlbum[] | null>(null)
   const [suggestionsFailed, setSuggestionsFailed] = useState(false)
   const suggested = suggestedList ?? []
-  // Guards against double submits (accept/dismiss) while a request is in flight.
-  const deciding = useRef(false)
+  // Decisions (accept/dismiss) run one at a time, in order.
+  const deciding = useRef<Promise<unknown>>(Promise.resolve())
   const [minBurstSize, setMinBurstSizeState] = useState(20)
   const [dismissedCount, setDismissedCount] = useState(0)
   const [notice, setNotice] = useState<SuggestionNotice>(null)
@@ -180,23 +180,26 @@ export function App() {
 
   const currentSuggestion = view.kind === 'suggestion' ? suggested.find((e) => e.id === view.id) : undefined
 
-  /** Runs one decision at a time; a failure (e.g. a rescan changed the suggestion) is shown, then the list refreshes. */
-  const decide = async <T,>(run: () => Promise<T>): Promise<T> => {
-    if (deciding.current) {
-      setNotice({ kind: 'error', message: 'Still working on the last change. Try again in a moment.' })
-      throw new Error('busy')
-    }
-    deciding.current = true
-    try {
-      return await run()
-    } catch (e) {
-      const message = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
-      setNotice({ kind: 'error', message })
-      throw e
-    } finally {
-      deciding.current = false
-      refreshAll()
-    }
+  /**
+   * Runs decisions one after another (a second one made while the first is in flight waits its
+   * turn rather than being lost). A failure, e.g. a rescan changed the suggestion, is shown;
+   * either way the list refreshes.
+   */
+  const decide = <T,>(run: () => Promise<T>): Promise<T> => {
+    const next = deciding.current.then(run).then(
+      (result) => {
+        refreshAll()
+        return result
+      },
+      (e: unknown) => {
+        const message = e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e)
+        setNotice({ kind: 'error', message })
+        refreshAll()
+        throw e
+      }
+    )
+    deciding.current = next.catch(() => {})
+    return next
   }
   const acceptSuggestions = (ids: string[], name: string) =>
     decide(async () => {

@@ -430,3 +430,36 @@ test('review 2: a merge with some photos missing waits rather than becoming a pa
   assert.equal(db.eventGroups().length, 1, 'kept for later')
   close()
 })
+
+test('review 3: a merge waits while a photo from the middle of the trip is missing', () => {
+  const { db, organiser, add, close } = setup()
+  const a = add('unsorted', 20, '2026-01-31T10:00:00')
+  db.addEventGroup({ name: 'Trip', start: '2026-01-31T10:00:00', end: '2026-01-31T13:10:00', members: [`t:${a[0]}`] })
+  // Every photo but the 10th is seen in this scan (its file is on an unplugged drive).
+  for (let i = 1; i <= 20; i++) {
+    if (i === 10) continue
+    db.recordFile(
+      {
+        path: `${BASE}/unsorted/IMG_${i}.jpg`,
+        size: 1,
+        mtimeMs: 1,
+        takenAt: new Date(Date.UTC(2026, 0, 31, 10, (i - 1) * 10)).toISOString().slice(0, 19),
+        width: null,
+        height: null,
+        orientation: null,
+        camera: null,
+        lat: null,
+        lon: null
+      },
+      `hash-${i}`,
+      8
+    )
+  }
+  db.markMissing(8)
+  db.refreshDerived()
+  organiser.invalidate()
+  organiser.convertOldMerges()
+  assert.equal(db.listAlbums().length, 0, 'no album missing the 10th photo')
+  assert.equal(db.eventGroups().length, 1)
+  close()
+})

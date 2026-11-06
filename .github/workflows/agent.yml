@@ -29,7 +29,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BODY: ${{ github.event.comment.body }}
-          LABEL_COUNT: ${{ length(github.event.issue.labels) }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
           IDEA: ${{ contains(github.event.issue.labels.*.name, 'idea') }}
           SPEC_READY: ${{ contains(github.event.issue.labels.*.name, 'spec-ready') }}
           BUSY: ${{ contains(github.event.issue.labels.*.name, 'building') }}
@@ -37,7 +37,7 @@ jobs:
           first=$(printf '%s' "$BODY" | head -n1 | tr '[:upper:]' '[:lower:]' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
           stage=none
           if [ "$EVENT" = "issues" ]; then
-            if [ "$LABEL_COUNT" = "0" ]; then stage=idea; fi
+            if [ -z "$LABELS" ]; then stage=idea; fi
           elif [ "$BUSY" = "true" ]; then stage=none
           elif [ "$SPEC_READY" != "true" ] && printf '%s' "$first" | grep -qE '^idea\b'; then stage=idea
           elif [ "$IDEA" != "true" ]; then stage=none

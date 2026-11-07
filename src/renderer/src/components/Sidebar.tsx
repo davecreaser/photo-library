@@ -224,7 +224,7 @@ export function Sidebar({
           <span className="count">{library.favoriteCount.toLocaleString()}</span>
         </div>
         <div
-          className={`nav-item ${view.kind === 'suggestions' || view.kind === 'suggestion' ? 'active' : ''}`}
+          className={`nav-item ${view.kind === 'suggestions' || view.kind === 'suggestion' || view.kind === 'albumOffer' ? 'active' : ''}`}
           onClick={() => onNavigate({ kind: 'suggestions' })}
         >
           <span className="label">✨ Suggested albums</span>

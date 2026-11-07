@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Album, SuggestedAlbum } from '../../../shared/types.ts'
+import type { Album, AlbumOffer, SuggestedAlbum } from '../../../shared/types.ts'
 import { formatRange } from '../format.ts'
 import { InlineInput } from './InlineInput.tsx'
 
 /** The one-at-a-time message in the status slot after a decision (spec 0001 design). */
 export type SuggestionNotice =
-  { kind: 'dismissed'; label: string; decisionIds: number[] } | { kind: 'made'; album: Album; sources: number } | { kind: 'error'; message: string } | null
+  | { kind: 'dismissed'; label: string; decisionIds: number[] }
+  | { kind: 'offerAdded'; albumId: number; albumName: string; count: number }
+  | { kind: 'offerDeclined'; albumId: number; albumName: string; photoIds: number[] }
+  | { kind: 'made'; album: Album; sources: number }
+  | { kind: 'error'; message: string }
+  | null
 
 interface Props {
   /** null until the first load finishes. */
   suggestions: SuggestedAlbum[] | null
+  /** New photos waiting for albums (spec 0005). */
+  offers: AlbumOffer[]
+  onOpenOffer: (albumId: number) => void
+  onAddOffer: (albumId: number) => void
+  onDeclineOffer: (albumId: number) => void
   /** Set when working out suggestions failed. */
   loadError: boolean
   onRetry: () => void
@@ -31,6 +41,9 @@ interface Props {
 const PAGE = 200
 const NONE: SuggestedAlbum[] = []
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
+
+export const newPhotosTitle = (o: Pick<AlbumOffer, 'count' | 'albumName'>) => `${plural(o.count, 'new photo')} for ${o.albumName}`
+export const offerMeta = (o: Pick<AlbumOffer, 'count' | 'start' | 'end'>) => `${formatRange(o.start, o.end)} · ${plural(o.count, 'photo')}`
 
 export function suggestionMeta(s: SuggestedAlbum): string {
   return s.named ? `${formatRange(s.start, s.end)} · ${plural(s.count, 'photo')}` : plural(s.count, 'photo')
@@ -95,7 +108,7 @@ export function SuggestionsView(props: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || document.querySelector('.modal')) return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && notice?.kind === 'dismissed') {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && (notice?.kind === 'dismissed' || notice?.kind === 'offerDeclined')) {
         e.preventDefault()
         props.onUndo()
       }
@@ -204,6 +217,31 @@ export function SuggestionsView(props: Props) {
         </div>
       )
     }
+    if (notice?.kind === 'offerDeclined') {
+      return (
+        <div className="merge-bar">
+          <span className="hint">
+            Won’t offer {notice.photoIds.length === 1 ? 'this photo' : `these ${notice.photoIds.length.toLocaleString()} photos`} for “{notice.albumName}”
+            again.
+          </span>
+          <button className="link" onClick={props.onUndo}>
+            Undo
+          </button>
+        </div>
+      )
+    }
+    if (notice?.kind === 'offerAdded') {
+      return (
+        <div className="merge-bar">
+          <span className="hint">
+            Added {plural(notice.count, 'photo')} to “{notice.albumName}”.
+          </span>
+          <button className="link" onClick={() => props.onOpenAlbum(notice.albumId)}>
+            Open album
+          </button>
+        </div>
+      )
+    }
     if (notice?.kind === 'error') {
       return (
         <div className="merge-bar">
@@ -245,7 +283,37 @@ export function SuggestionsView(props: Props) {
       </div>
       {statusSlot()}
 
-      {suggestions.length === 0 && (
+      {props.offers.length > 0 && (
+        <section className="event-year offers">
+          <h2>New photos for your albums</h2>
+          {props.offers.map((o) => (
+            <div key={o.albumId} className="offer-row">
+              <img src={`photo://thumb/${o.coverId}`} loading="lazy" alt="" />
+              <div className="offer-text">
+                <div className="event-name" title={newPhotosTitle(o)}>
+                  {newPhotosTitle(o)}
+                </div>
+                <div className="event-meta">{offerMeta(o)}</div>
+              </div>
+              <div className="offer-actions">
+                <button
+                  className="primary-small"
+                  title={`Adds these ${plural(o.count, 'photo')} to the album ${o.albumName}. Nothing is moved or changed on disk.`}
+                  onClick={() => props.onAddOffer(o.albumId)}
+                >
+                  Add to {o.albumName}
+                </button>
+                <button onClick={() => props.onOpenOffer(o.albumId)}>Look</button>
+                <button title={`Stop offering these photos for ${o.albumName}.`} onClick={() => props.onDeclineOffer(o.albumId)}>
+                  Not these
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {suggestions.length === 0 && props.offers.length === 0 && (
         <div className="empty">
           <p>Nothing to suggest right now.</p>
           <p className="hint">

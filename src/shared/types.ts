@@ -68,6 +68,16 @@ export interface SuggestedAlbum {
   coverId: number
 }
 
+/** New photos waiting for an album made from suggestions (spec 0005). */
+export interface AlbumOffer {
+  albumId: number
+  albumName: string
+  count: number
+  start: string | null
+  end: string | null
+  coverId: number
+}
+
 export interface DismissedSuggestion {
   /** The dismissal's id (pass to restoreSuggestions). */
   id: number
@@ -136,6 +146,8 @@ export interface PhotoFilter {
   albumId?: number
   tagId?: number
   suggestionId?: string
+  /** Only the new photos offered to this album (spec 0005). */
+  offerAlbumId?: number
   favorites?: boolean
   personId?: number
   undated?: boolean
@@ -237,6 +249,12 @@ export interface Api {
   /** Undo a dismissal, or restore one from the dismissed list. */
   restoreSuggestions(dismissalIds: number[]): Promise<void>
   getDismissedSuggestions(): Promise<DismissedSuggestion[]>
+  getAlbumOffers(): Promise<AlbumOffer[]>
+  /** Adds the offered photos to the album; resolves to how many. */
+  acceptAlbumOffer(albumId: number): Promise<number>
+  /** "Not these": resolves to the declined photo ids, for undo. */
+  declineAlbumOffer(albumId: number): Promise<number[]>
+  undoDeclineAlbumOffer(albumId: number, photoIds: number[]): Promise<void>
   getDismissedCount(): Promise<number>
   getMinBurstSize(): Promise<number>
   /** False if the value isn't a whole number from 1 to 1,000 (nothing changes). */

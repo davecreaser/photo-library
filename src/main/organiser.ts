@@ -4,12 +4,14 @@ import type { LibraryDb } from './db.ts'
 import { detectClockErrors, type Suggestion } from './dates.ts'
 import { applyGroups, detectEvents, type DetectedEvent } from './events.ts'
 import { DEFAULT_MIN_BURST, isCandidate, parseMinBurstSize, selectSuggestions } from './suggestions.ts'
-import type { Album, ClockCorrection, ClockSuggestion, DismissedSuggestion, SuggestedAlbum } from '../shared/types.ts'
+import { computeOffers, withoutOffered, type Offer } from './newPhotos.ts'
+import type { Album, AlbumOffer, ClockCorrection, ClockSuggestion, DismissedSuggestion, SuggestedAlbum } from '../shared/types.ts'
 
 export class Organiser {
   private db: LibraryDb
   /** Detected groups (named folders and bursts), before the user's decisions are applied. */
   private groupsCache: DetectedEvent[] | null = null
+  private inputsCache: ReturnType<LibraryDb['photosForOrganising']> | null = null
 
   constructor(db: LibraryDb) {
     this.db = db
@@ -18,15 +20,78 @@ export class Organiser {
   /** Call after anything that changes dates, locations, favourites or albums. */
   invalidate(): void {
     this.groupsCache = null
+    this.inputsCache = null
   }
 
   private basePath(): string {
     return this.db.getSetting('basePath') ?? ''
   }
 
-  private groups(): DetectedEvent[] {
-    this.groupsCache ??= detectEvents(this.db.photosForOrganising(this.basePath()))
+  private inputs() {
+    this.inputsCache ??= this.db.photosForOrganising(this.basePath())
+    return this.inputsCache
+  }
+
+  /** Detected groups before offers are taken out (see `groups`). */
+  private rawGroups(): DetectedEvent[] {
+    this.groupsCache ??= detectEvents(this.inputs())
     return this.groupsCache
+  }
+
+  /** The groups as suggestions see them: photos offered to an album (spec 0005) are not suggested again. */
+  private groups(): DetectedEvent[] {
+    const offers = this.offers()
+    if (offers.length === 0 && this.db.offerSources().length === 0) return this.rawGroups()
+    // Declined photos ("Not these") are not suggested as a new album either.
+    const declined = [...this.db.offerDeclines().values()].flatMap((s) => [...s])
+    const hidden = [...offers, { albumId: -1, photoIds: declined, start: null, end: null } as Offer]
+    return withoutOffered(this.rawGroups(), hidden, this.inputs())
+  }
+
+  /** New photos waiting for each album made from suggestions (spec 0005), newest first. */
+  private offers(): Offer[] {
+    const sources = this.db.offerSources()
+    if (sources.length === 0) return []
+    const excluded = new Set<number>()
+    for (const s of [...this.db.decisionPhotoSets(), ...this.db.albumPhotoSets()]) for (const p of s.photoIds) excluded.add(p)
+    return computeOffers(sources, this.inputs(), this.rawGroups(), excluded, this.db.offerDeclines())
+  }
+
+  listOffers(): AlbumOffer[] {
+    const names = new Map(this.db.offerSources().map((s) => [s.albumId, s.name]))
+    return this.offers().map((o) => ({
+      albumId: o.albumId,
+      albumName: names.get(o.albumId) ?? '',
+      count: o.photoIds.length,
+      start: o.start,
+      end: o.end,
+      coverId: o.photoIds[0]
+    }))
+  }
+
+  /** The photos offered to an album, in capture-time order; empty if none. */
+  offerPhotoIds(albumId: number): number[] {
+    return this.offers().find((o) => o.albumId === albumId)?.photoIds ?? []
+  }
+
+  /** Adds the offered photos to the album; returns how many. Atomic. */
+  acceptOffer(albumId: number): number {
+    const ids = this.offerPhotoIds(albumId)
+    if (ids.length === 0) throw new Error('Those photos are no longer here.')
+    this.db.addOfferedToAlbum(albumId, ids)
+    return ids.length
+  }
+
+  /** "Not these": returns the photos declined, for undo. */
+  declineOffer(albumId: number): number[] {
+    const ids = this.offerPhotoIds(albumId)
+    if (ids.length === 0) throw new Error('Those photos are no longer here.')
+    this.db.addOfferDeclines(albumId, ids)
+    return ids
+  }
+
+  undoDeclineOffer(albumId: number, photoIds: number[]): void {
+    this.db.removeOfferDeclines(albumId, photoIds)
   }
 
   /**

@@ -34,6 +34,10 @@ const api: Api = {
   restoreSuggestions: (ids) => ipcRenderer.invoke('suggestions:restore', ids),
   getDismissedSuggestions: () => ipcRenderer.invoke('suggestions:dismissed'),
   getDismissedCount: () => ipcRenderer.invoke('suggestions:dismissedCount'),
+  getAlbumOffers: () => ipcRenderer.invoke('offers:list'),
+  acceptAlbumOffer: (id) => ipcRenderer.invoke('offers:accept', id),
+  declineAlbumOffer: (id) => ipcRenderer.invoke('offers:decline', id),
+  undoDeclineAlbumOffer: (id, ids) => ipcRenderer.invoke('offers:undoDecline', id, ids),
   getMinBurstSize: () => ipcRenderer.invoke('suggestions:getMin'),
   setMinBurstSize: (n) => ipcRenderer.invoke('suggestions:setMin', n),
 

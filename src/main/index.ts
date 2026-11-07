@@ -207,7 +207,14 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('photos:query', (_e, filter: PhotoFilter) =>
-    search.query(filter, filter.suggestionId ? organiser.suggestionPhotoIds(filter.suggestionId) : undefined)
+    search.query(
+      filter,
+      filter.suggestionId
+        ? organiser.suggestionPhotoIds(filter.suggestionId)
+        : filter.offerAlbumId !== undefined
+          ? organiser.offerPhotoIds(filter.offerAlbumId)
+          : undefined
+    )
   )
   ipcMain.handle('content:progress', () => analysis.contentProgress())
   ipcMain.handle('photos:get', (_e, id: number) => db.getPhoto(id))
@@ -227,6 +234,10 @@ function registerIpc(): void {
   ipcMain.handle('suggestions:restore', (_e, ids: number[]) => organiser.restoreDismissed(ids))
   ipcMain.handle('suggestions:dismissed', () => organiser.listDismissed())
   ipcMain.handle('suggestions:dismissedCount', () => organiser.dismissedCount())
+  ipcMain.handle('offers:list', () => organiser.listOffers())
+  ipcMain.handle('offers:accept', (_e, id: number) => organiser.acceptOffer(id))
+  ipcMain.handle('offers:decline', (_e, id: number) => organiser.declineOffer(id))
+  ipcMain.handle('offers:undoDecline', (_e, id: number, ids: number[]) => organiser.undoDeclineOffer(id, ids))
   ipcMain.handle('suggestions:getMin', () => organiser.getMinBurstSize())
   ipcMain.handle('suggestions:setMin', (_e, n: number) => organiser.setMinBurstSize(n))
 

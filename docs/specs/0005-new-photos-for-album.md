@@ -109,3 +109,5 @@ Implementation notes:
 - Photos added through an offer are also added to the album's accepted decision, so removing one later doesn't make it new again, and deleting the album brings the whole group back as a suggestion.
 - Photos offered to an album are taken out of the detected groups before suggestions are chosen (AC-4); a trimmed burst's name and dates follow the remaining photos.
 - Schema version 6 adds `offer_declines` (album + photo, cascading with both).
+
+5. Review: photos declined with "Not these" are also not shown as a new suggestion (they were turned down for this album, not freed up). Offers are recomputed per call; measured cost is pure-compute under 200 ms at 100k photos, caching deferred.

@@ -19,7 +19,7 @@ import { PhotoGrid } from './components/PhotoGrid.tsx'
 import { Viewer } from './components/Viewer.tsx'
 import { SelectionBar } from './components/SelectionBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
-import { SuggestionsView, newPhotosTitle, offerMeta, suggestionMeta, type SuggestionNotice } from './components/SuggestionsView.tsx'
+import { SuggestionsView, offerMeta, suggestionMeta, type SuggestionNotice } from './components/SuggestionsView.tsx'
 import { DismissedDialog } from './components/DismissedDialog.tsx'
 import { ClockBanner } from './components/ClockBanner.tsx'
 import { CorrectionsDialog } from './components/CorrectionsDialog.tsx'
@@ -473,7 +473,7 @@ export function App() {
                 onClick={async () => {
                   try {
                     await addOffer(currentOffer.albumId)
-                    navigate({ kind: 'album', id: currentOffer.albumId }, true)
+                    navigate({ kind: 'album', id: currentOffer.albumId })
                   } catch {
                     /* the error is shown */
                   }

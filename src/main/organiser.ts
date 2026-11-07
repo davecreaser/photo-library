@@ -40,7 +40,12 @@ export class Organiser {
 
   /** The groups as suggestions see them: photos offered to an album (spec 0005) are not suggested again. */
   private groups(): DetectedEvent[] {
-    return withoutOffered(this.rawGroups(), this.offers(), this.inputs())
+    const offers = this.offers()
+    if (offers.length === 0 && this.db.offerSources().length === 0) return this.rawGroups()
+    // Declined photos ("Not these") are not suggested as a new album either.
+    const declined = [...this.db.offerDeclines().values()].flatMap((s) => [...s])
+    const hidden = [...offers, { albumId: -1, photoIds: declined, start: null, end: null } as Offer]
+    return withoutOffered(this.rawGroups(), hidden, this.inputs())
   }
 
   /** New photos waiting for each album made from suggestions (spec 0005), newest first. */

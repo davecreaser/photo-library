@@ -110,6 +110,7 @@ test('AC-5: Not these is remembered and undoable; later photos are offered anew'
   const declined = organiser.declineOffer(album.id)
   assert.equal(declined.length, 3)
   assert.deepEqual(organiser.listOffers(), [])
+  assert.equal(organiser.listSuggestions().length, 0, 'declined photos do not come back as a suggestion')
   organiser.invalidate()
   assert.deepEqual(organiser.listOffers(), [], 'remembered after a rescan')
   add('unsorted', 2, '2025-08-13T07:30:00')

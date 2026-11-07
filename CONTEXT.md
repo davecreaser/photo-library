@@ -102,3 +102,6 @@ A face the user has said belongs to a person, by naming its face group or the fa
 **Matched face**:
 A face the app has attributed to a person automatically because it looks like their confirmed faces. The user can reject it ("not this person"), and it won't be matched to them again.
 _Avoid_: auto-tagged, suggested face
+
+**Offer** (new photos for an album):
+Photos that turned up after an album was made from a suggestion, inside its dates or in its folder. Shown in Suggested albums as "N new photos for Sintra"; the user adds them or says "Not these" (remembered by photo). Never added automatically; hand-made albums get none.

@@ -11,20 +11,27 @@ Issue: #6
 
 - **US-1** As someone with hundreds of photos from one trip, I want near-identical shots grouped, with the best one on top, so that I stop looking at the same picture twelve times.
 - **US-2** As that user, I want blurry, too-dark or too-bright photos ranked below sharper ones so that I don't pick them by accident.
-- **US-3** As that user, I want a "Best of" view of any album or suggested album that picks a sensible number of photos covering every day and every named person, so that I get a good short list in one click.
+- **US-3** As that user, I want a "Best of" view of any album or suggested album that picks a sensible number of photos telling the story of the trip (the moments, places and people that mattered, not just one photo per day), so that I get a good short list in one click.
+- **US-7** As that user, I want the choice to reflect what I care about (the photos I star, the people I've named, the things I say I want), and to be able to steer it in words, so that it feels like my pick and not a generic one.
 - **US-4** As that user, I want to change the choice (swap a photo for another from its group, add, remove, change how many) and then use it, so that I stay in charge.
 - **US-5** As that user, I want to keep the chosen photos as a new album, so that later features (slideshow, photobook) and I can use them.
 - **US-6** As a privacy-minded user, I want all of this done on my computer, with no file touched.
 
 ## Acceptance criteria
 
-Terms. A **look-alike group** is two or more photos of the same scene taken close together. A photo's **quality score** is a number from 0 to 1 combining sharpness, exposure and (when there are faces) face size. A **best-of selection** is the app's pick of N photos from a set (an album or a suggested album).
+Terms. A **moment** is a run of photos close in time and scene (a lunch, a viewpoint, a market stop), found by capture-time gaps and content similarity. A **look-alike group** is two or more photos of the same scene taken close together. A photo's **quality score** is a number from 0 to 1 combining sharpness, exposure and (when there are faces) face size. A **best-of selection** is the app's pick of N photos from a set (an album or a suggested album).
 
 - **AC-1 Quality measured.** Each photo's sharpness and exposure are measured once, locally, in the existing background analysis pass (newest first), and stored by photo with a version. Test photos: a sharp generated image scores higher than the same image strongly blurred; an almost-black or almost-white image scores lower than a well-exposed one. A photo that can't be read has no score and is never preferred over a scored one. Existing libraries are measured in the background without blocking use; photos not yet measured are treated as middling and the view says how many are pending.
 - **AC-2 Look-alikes.** Photos are grouped as look-alikes when their content vectors (spec 0002) are very similar (cosine at or above `LOOKALIKE_MIN_SCORE`, calibrated so a burst of one scene groups and two different scenes of the same place do not) and their capture times are within 10 minutes of the next photo in the group. Undated photos group only above a stricter similarity threshold. Grouping is by chain (A~B and B~C puts all three together) with a group size cap of 30. Computed from stored vectors; no new model. Photos without vectors are never grouped.
-- **AC-3 Best of an album.** Every album and every suggested album has a **Best of** view. With 400 photos over 5 days it picks by default `clamp(round(10% of photos), 12, 60)` photos (40 here): at most one from each look-alike group, the one with the highest quality score, spread so that every capture day in the set has at least one photo when N allows, with the rest spread in proportion to each day's photo count. Photos with a very low quality score are excluded unless nothing else is left for that day. A set smaller than the default N shows all its non-duplicate photos.
-- **AC-4 People covered.** When the set contains photos of named people, each person with at least 3 photos in the set appears in at least one selected photo, when N allows (the person's best-scoring photo is preferred; a photo of several people counts for all of them). Eyes-open is not scored (see Non-goals).
-- **AC-5 Deterministic and explainable.** The same photos and settings always give the same selection. Each selected photo can say why in plain words, from {"Sharpest of 6 similar photos", "Only photo of 14 Aug", "Includes Maria", "You starred this one"}, shown as a tooltip in the Best of grid and in the viewer's info panel.
+- **AC-3 Best of an album.** Every album and every suggested album has a **Best of** view. It picks by default `clamp(round(10% of photos), 12, 60)` photos (40 for 400) by telling the story of the set rather than filling a quota per day:
+  - The set is split into **moments** (AC-3a). Each moment gets a share of N in proportion to its **weight**: more photos taken (the photographer lingered), a starred photo, named people present, and a nearby-in-time album or tag the user made. The share is shrunk (square root) so long moments don't take over, and every moment of at least 3 photos can get one when N allows.
+  - Within a moment, photos are chosen one at a time by **value minus repetition**: a photo's value is its quality score plus its interest signals (AC-4); its repetition is its content similarity to photos already picked anywhere in the selection (not only its own look-alike group). So two sunsets from different days don't both make it when a different place is waiting.
+  - At most one photo per look-alike group. Photos with a very low quality score are excluded unless nothing else is left for that moment. A set smaller than the default N shows all its non-duplicate photos.
+- **AC-3a Moments.** Moments are computed, not stored, from capture times (a gap over 90 minutes starts a new one, or a jump in content similarity within a day) and content vectors. They are not shown as albums; the view only uses them for coverage and for the reason text ("One of 3 from the market"). Undated photos form moments by content only.
+- **AC-4 Interest signals (what makes a photo matter).** A photo's value rises with: you starred it (strongest); it is in another album you made; it carries a tag; it has named people, more so when the person is large and central in the frame; the person is someone you've named and have many photos of across the library (people who matter to you); you took several shots of it (it is in a look-alike group, a mild signal). Each named person with at least 3 photos in the set appears in at least one selection photo when N allows, by value (a photo of several people counts for all of them). These are fixed, documented weights; no model judges beauty. Eyes-open is not scored (see Non-goals).
+- **AC-4a Your taste (optional, on-device).** When the user has starred at least 20 photos in the library, a "Lean towards what I star" setting (on by default, turn off in Settings) adds a small bonus to photos whose content vectors are close to the average of their starred photos, so the pick drifts to the kind of picture they like (people, landscapes, close-ups). The bonus is capped so it never outweighs a clear quality difference. Computed from stored vectors; nothing is learned by a model, uploaded or stored beyond what exists. Edits in a Best of view (swap, remove, add) do not train anything.
+- **AC-4b Steer in words.** The Best of header has a "Focus on…" field. Typing words (e.g. "the kids, food, the beach") adds a bonus to photos whose content matches (the same SigLIP text search as spec 0002, above `CONTENT_MIN_SCORE`) and refills the pick; clearing it returns to the default. The focus is not saved after the view closes. With no content model yet, the field says "Search by content isn't ready yet."
+- **AC-5 Deterministic and explainable.** The same photos and settings always give the same selection. Each selected photo can say why in plain words, from {"Sharpest of 6 similar photos", "One of 3 from the market", "Includes Maria", "You starred this one", "Matches “the beach”", "Something different from the rest"}, shown as a tooltip in the Best of grid and in the viewer's info panel. The reason shown is the one that mattered most for that photo's pick.
 - **AC-6 Adjusting.** In the Best of view the user can: change how many (a stepper, from 6 to the set size); open a selected photo's look-alike group and swap in another from it; remove a photo; add any other photo of the set. Edits last until the view is closed unless kept (AC-7); changing N after edits keeps the user's edits and refills or trims the automatic picks only. "Reset" returns to the automatic pick.
 - **AC-7 Keep it.** "Make album" creates an ordinary album (named "Best of <source name>", editable) from the current selection, nested under the source album when there is one. The new album is plain: nothing keeps it in sync, and the source album is unchanged. Making it again creates a second album with a numbered name; nothing is overwritten.
 - **AC-8 Look-alikes elsewhere.** In an album's grid, a "Show look-alikes together" toggle (off by default) stacks each look-alike group into one tile showing its best photo and a count badge; opening the tile shows the group. Toggling never changes the album's contents or the counts shown.
@@ -36,7 +43,8 @@ Terms. A **look-alike group** is two or more photos of the same scene taken clos
 ## Non-goals
 
 - **Eyes open / blinking.** Needs a face classifier the app doesn't have (YuNet/SFace don't say). A follow-up once the rest proves useful.
-- Aesthetic scoring by a model ("is this beautiful"); only technical quality plus coverage.
+- Aesthetic scoring by a model ("is this beautiful"). Judged taste is personal and a generic model would impose someone else's. The pick uses technical quality, the user's own signals (stars, albums, tags, named people), repetition avoidance, and words the user types; the only learning is a capped lean towards the average of their own stars (AC-4a), which is arithmetic on existing vectors.
+- Learning from the user's edits in the Best of view (swap/remove/add). A candidate follow-up if the owner wants the pick to improve over time.
 - Hiding, rejecting or deleting look-alikes or poor photos; everything stays in the album, and files are never touched.
 - Picking across the whole library or a year (the photobook recipe will reuse this selection later).
 - Slideshow, photobook or export; this makes the list.
@@ -52,7 +60,7 @@ Terms. A **look-alike group** is two or more photos of the same scene taken clos
 ## Product
 
 - **Tier:** core organising and the base for outcomes; free. Any paid tier would be about the recipes built on top.
-- **Assumptions to watch:** the 10-minute window and default N (10%, 12–60) reflect one person's trips and cameras; N is adjustable per view and both are constants to tune. Burst-heavy shooters (sports, wildlife) may want bigger groups.
+- **Assumptions to watch:** the moment gap (90 minutes), the signal weights and the taste cap are guesses to tune against the owner's own trips (`scripts/model-eval`-style measurement, read-only); the 10-minute window and default N (10%, 12–60) reflect one person's trips and cameras; N is adjustable per view and both are constants to tune. Burst-heavy shooters (sports, wildlife) may want bigger groups.
 
 ## Design
 
@@ -67,11 +75,12 @@ Reuses the album and suggestion header actions, `PhotoGrid`, the viewer info pan
 
 ### Best of view
 
-- Title **"Best of Sintra"**, subtitle `40 of 412 photos · 5 days`.
+- Title **"Best of Sintra"**, subtitle `40 of 412 photos · 14 moments`.
+- A **"Focus on…"** text field under the title (placeholder: "the kids, food, the beach"); typing refills the pick after a short pause; a small ✕ clears it.
 - Header: stepper **"Show [ 40 ] photos"** (− / +, 6 to the set size), **[Make album]** (primary), **[Back to Sintra]**, and **Reset** once edited.
 - Grid: selected photos in capture-time order, with day headings. Each tile has a hover ✕ (remove) and, when it has look-alikes, a stack badge "6" that opens a strip of the group under the tile ("Pick another") to swap.
 - A final ghost tile **"Add a photo…"** opens a picker of the rest of the set.
-- Tile tooltip: the reason (AC-5). Make album tooltip: **"Creates a new album with these photos. Nothing is moved or changed on disk."**
+- Tile tooltip: the reason (AC-5). Day headings stay, with a quiet moment label under the tile when it differs from its neighbour. Make album tooltip: **"Creates a new album with these photos. Nothing is moved or changed on disk."**
 
 ### Notices (the existing status slot)
 
@@ -94,7 +103,7 @@ Reuses the album and suggestion header actions, `PhotoGrid`, the viewer info pan
 
 ### Traceability
 
-- AC-1: pending notice. AC-2: badge, strip, toggle. AC-3: default pick and stepper. AC-4/5: reasons ("Includes Maria"). AC-6: stepper, ✕, strip, Add a photo, Reset. AC-7: Make album and notice. AC-8: toggle and tile badge. AC-9: empty and pending states. AC-10: loading skeleton. AC-11: copy says nothing on disk changes. AC-12: no UI.
+- AC-1: pending notice. AC-2: badge, strip, toggle. AC-3: default pick and stepper. AC-3/3a: subtitle's moment count. AC-4/5: reasons ("Includes Maria", "You starred this one"). AC-4a: Settings toggle "Lean towards what I star" (with the line "Uses only your own stars, on this computer."). AC-4b: Focus field. AC-6: stepper, ✕, strip, Add a photo, Reset. AC-7: Make album and notice. AC-8: toggle and tile badge. AC-9: empty and pending states. AC-10: loading skeleton. AC-11: copy says nothing on disk changes. AC-12: no UI.
 
 ## Open questions
 
@@ -104,6 +113,9 @@ Reuses the album and suggestion header actions, `PhotoGrid`, the viewer info pan
 4. Should a starred photo win its look-alike group over the sharpest one? Recommended: yes, shown as "You starred this one".
 5. Should Best of also appear for search results and a person's photos? Recommended: not now; albums and suggestions only.
 6. Should quality measuring join the single analysis pass in `analysis.ts`? Recommended: yes, to avoid decoding twice; an already-analysed library re-reads its photos once to get scores, without re-running faces or content.
+7. (New) Choosing "with context": should the pick use moments, interest signals, repetition avoidance and a "Focus on…" field instead of one-per-day-and-person? Recommended: yes, as written.
+8. (New) Should a model ever judge what's beautiful? Recommended: no. It is too personal and would be someone else's taste. Instead, lean (capped, on by default, can be turned off) towards the average of the user's own stars. Say if you would rather have no taste lean at all.
+9. (New) Should the Best of view learn from the user's swaps and removals so later picks improve? Recommended: not in this spec; revisit once the owner has used it.
 
 ## Decisions
 

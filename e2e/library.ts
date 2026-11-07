@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import sharp from 'sharp'
 
 let n = 0
-async function photo(path: string, date: string | null, camera = 'FUJIFILM X-T50'): Promise<void> {
+export async function photo(path: string, date: string | null, camera = 'FUJIFILM X-T50'): Promise<void> {
   mkdirSync(dirname(path), { recursive: true })
   const hue = (n++ * 47) % 360
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="hsl(${hue},55%,50%)"/><text x="12" y="185" font-size="18" fill="white" font-family="sans-serif">${n}</text></svg>`

@@ -3,7 +3,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createContentLibrary, createEdgeLibrary, createLibrary, createManyFoldersLibrary, fingerprint, LONG_FOLDER, type Library } from './library.ts'
+import { createContentLibrary, createEdgeLibrary, createLibrary, photo, createManyFoldersLibrary, fingerprint, LONG_FOLDER, type Library } from './library.ts'
 
 let lib: Library
 let before: string
@@ -622,4 +622,133 @@ test('albums move: dropping an album into its own sub-album is refused; moving k
   expect(after.find((a) => a.id === parent.id)?.parentId).toBe(dest.id)
   expect(after.find((a) => a.id === child.id)?.parentId).toBe(parent.id)
   // afterAll's fingerprint check proves no photo file was touched.
+})
+
+// --- Spec 0005 QA: new photos for an album ---
+
+/** A fresh generated library (so the shared one's fingerprint is untouched) with Poland made into an album. */
+async function poland() {
+  const own = await createLibrary()
+  await app.close()
+  await launch(own.root)
+  await chooseLibrary(own.uniquePhotos)
+  await nav('Suggested albums').click()
+  await card('Poland').hover()
+  await card('Poland').getByRole('button', { name: 'Make album' }).click()
+  await page.locator('.event-card .inline-input').press('Enter')
+  await expect(albumsNamed('Poland')).toContainText('3')
+  return own
+}
+const rescan = async () => {
+  await page.getByRole('button', { name: 'Rescan' }).click()
+  await expect(page.locator('.scan-status')).not.toContainText('…')
+}
+const offerRow = () => page.locator('.offer-row')
+
+test('new photos for an album (AC-1..AC-4): offered after a rescan, listed first, opened in capture order, added exactly; not also suggested', async () => {
+  const own = await poland()
+  try {
+    // Nothing offered yet, and no section (AC-1, AC-8).
+    await expect(offerRow()).toHaveCount(0)
+    await expect(page.getByText('New photos for your albums')).toHaveCount(0)
+
+    // The next day in the same folder (b), an afternoon photo of the same day in another folder (a),
+    // and an unrelated photo that must not be offered.
+    await photo(join(own.root, 'fuji/trips/12.25.poland', 'NEW1.JPG'), '2024:12:14 10:00:00')
+    await photo(join(own.root, 'fuji/trips/12.25.poland', 'NEW2.JPG'), '2024:12:14 11:00:00')
+    await photo(join(own.root, 'phone', 'P1.JPG'), '2024:12:13 15:00:00')
+    await photo(join(own.root, 'phone', 'FAR.JPG'), '2023:03:03 15:00:00')
+    await rescan()
+    await expect(page.locator('.scan-status')).toContainText(`${own.uniquePhotos + 4} photos`)
+
+    // AC-2: listed at the top, counted in the sidebar badge (offer + the 2 other suggestions + the far photo's none).
+    await expect(page.locator('.offers h2')).toHaveText('New photos for your albums')
+    await expect(offerRow()).toHaveCount(1)
+    await expect(offerRow().locator('.event-name')).toHaveText('3 new photos for Poland')
+    const badge = Number(await nav('Suggested albums').locator('.count').textContent())
+    expect(badge).toBe((await cards().count()) + 1)
+
+    // AC-4: none of the offered photos is in a suggestion card; the far photo is not offered.
+    for (const c of await cards().all()) await expect(c.locator('.event-name')).not.toHaveText('Poland')
+    await expect(cards().locator('.event-name')).toHaveText(['Sail Amsterdam', 'House Listing'])
+
+    // Look: exactly those photos.
+    await offerRow().getByRole('button', { name: 'Look' }).click()
+    await expect(page.locator('h1')).toHaveText('New photos for Poland')
+    await expect(page.locator('.grid .tile')).toHaveCount(3)
+
+    // Add from the opened offer: goes to the album, count rises by exactly 3.
+    await page.getByRole('button', { name: 'Add to Poland' }).click()
+    await expect(page.locator('h1')).toHaveText('Poland')
+    await expect(page.locator('.grid .tile')).toHaveCount(6)
+    await expect(albumsNamed('Poland')).toContainText('6')
+    await nav('Suggested albums').click()
+    await expect(offerRow()).toHaveCount(0)
+    await rescan()
+    await expect(offerRow()).toHaveCount(0)
+  } finally {
+    rmSync(own.root, { recursive: true, force: true })
+  }
+})
+
+test('new photos for an album (AC-3, AC-5): Add from the row shows a notice; Not these is undoable, remembered through a restart, later photos offered anew', async () => {
+  const own = await poland()
+  try {
+    await photo(join(own.root, 'fuji/trips/12.25.poland', 'NEW1.JPG'), '2024:12:14 10:00:00')
+    await rescan()
+    await nav('Suggested albums').click()
+    await expect(offerRow().locator('.event-name')).toHaveText('1 new photo for Poland')
+
+    // Decline, then undo. (A double-click shows an error instead of the Undo notice: reported as a bug.)
+    await offerRow().getByRole('button', { name: 'Not these' }).click()
+    await expect(offerRow()).toHaveCount(0)
+    await expect(page.locator('.merge-bar')).toContainText('Won’t offer these 1 photos for “Poland” again.')
+    await page.locator('.merge-bar').getByRole('button', { name: 'Undo' }).click()
+    await expect(offerRow()).toHaveCount(1)
+
+    // Decline for good; stays hidden after a rescan and a restart, and is not suggested instead.
+    await offerRow().getByRole('button', { name: 'Not these' }).click()
+    await expect(offerRow()).toHaveCount(0)
+    await rescan()
+    await app.close()
+    await launch(own.root)
+    await settled(own.uniquePhotos + 1)
+    await nav('Suggested albums').click()
+    await expect(offerRow()).toHaveCount(0)
+    await expect(cards().locator('.event-name')).not.toContainText(['Poland'])
+
+    // A later photo is a new offer of just that photo.
+    await photo(join(own.root, 'fuji/trips/12.25.poland', 'NEW2.JPG'), '2024:12:15 10:00:00')
+    await rescan()
+    await expect(offerRow().locator('.event-name')).toHaveText('1 new photo for Poland')
+    await offerRow().getByRole('button', { name: 'Add to Poland' }).click()
+    await expect(page.locator('.merge-bar')).toContainText('Added 1 photo to “Poland”.')
+    await page.locator('.merge-bar').getByRole('button', { name: 'Open album' }).click()
+    await expect(page.locator('.grid .tile')).toHaveCount(4)
+  } finally {
+    rmSync(own.root, { recursive: true, force: true })
+  }
+})
+
+test('new photos for an album (AC-1, AC-7): albums made by hand get none; deleting the album removes the offer and brings the suggestion back', async () => {
+  const own = await poland()
+  try {
+    await page.evaluate(() => window.api.createAlbum('By hand', null))
+    await photo(join(own.root, 'fuji/trips/12.25.poland', 'NEW1.JPG'), '2024:12:14 10:00:00')
+    await rescan()
+    await nav('Suggested albums').click()
+    await expect(offerRow()).toHaveCount(1)
+    await expect(offerRow().locator('.event-name')).not.toContainText('By hand')
+
+    await albumsNamed('Poland').hover()
+    await albumsNamed('Poland').getByTitle('Delete album').click()
+    await page.locator('.confirm').getByRole('button', { name: 'Delete' }).click()
+    await expect(albumsNamed('Poland')).toHaveCount(0)
+    await expect(offerRow()).toHaveCount(0)
+    await expect(card('Poland')).toHaveCount(1)
+    await card('Poland').click()
+    await expect(page.locator('.grid .tile')).toHaveCount(4)
+  } finally {
+    rmSync(own.root, { recursive: true, force: true })
+  }
 })

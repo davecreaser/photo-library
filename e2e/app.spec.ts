@@ -699,10 +699,10 @@ test('new photos for an album (AC-3, AC-5): Add from the row shows a notice; Not
     await nav('Suggested albums').click()
     await expect(offerRow().locator('.event-name')).toHaveText('1 new photo for Poland')
 
-    // Decline, then undo. (A double-click shows an error instead of the Undo notice: reported as a bug.)
-    await offerRow().getByRole('button', { name: 'Not these' }).click()
+    // Decline (a double-click still leaves the Undo notice), then undo.
+    await offerRow().getByRole('button', { name: 'Not these' }).dblclick()
     await expect(offerRow()).toHaveCount(0)
-    await expect(page.locator('.merge-bar')).toContainText('Won’t offer these 1 photos for “Poland” again.')
+    await expect(page.locator('.merge-bar')).toContainText('Won’t offer this photo for “Poland” again.')
     await page.locator('.merge-bar').getByRole('button', { name: 'Undo' }).click()
     await expect(offerRow()).toHaveCount(1)
 

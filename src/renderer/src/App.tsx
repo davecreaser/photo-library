@@ -228,18 +228,29 @@ export function App() {
       const decisionIds = await api.dismissSuggestions(ids)
       setNotice({ kind: 'dismissed', label, decisionIds })
     })
+  const offerBusy = useRef(new Set<number>())
+  /** A second click while the first is still working does nothing (it would replace the Undo notice with an error). */
+  const once = (albumId: number, run: () => Promise<void>): Promise<void> => {
+    if (offerBusy.current.has(albumId)) return Promise.resolve()
+    offerBusy.current.add(albumId)
+    return run().finally(() => offerBusy.current.delete(albumId))
+  }
   const addOffer = (albumId: number) =>
-    decide(async () => {
-      const albumName = offers.find((o) => o.albumId === albumId)?.albumName ?? 'album'
-      const count = await api.acceptAlbumOffer(albumId)
-      setNotice({ kind: 'offerAdded', albumId, albumName, count })
-    })
+    once(albumId, () =>
+      decide(async () => {
+        const albumName = offers.find((o) => o.albumId === albumId)?.albumName ?? 'album'
+        const count = await api.acceptAlbumOffer(albumId)
+        setNotice({ kind: 'offerAdded', albumId, albumName, count })
+      })
+    )
   const declineOffer = (albumId: number) =>
-    decide(async () => {
-      const albumName = offers.find((o) => o.albumId === albumId)?.albumName ?? 'album'
-      const photoIds = await api.declineAlbumOffer(albumId)
-      setNotice({ kind: 'offerDeclined', albumId, albumName, photoIds })
-    })
+    once(albumId, () =>
+      decide(async () => {
+        const albumName = offers.find((o) => o.albumId === albumId)?.albumName ?? 'album'
+        const photoIds = await api.declineAlbumOffer(albumId)
+        setNotice({ kind: 'offerDeclined', albumId, albumName, photoIds })
+      })
+    )
   const undoDismiss = async () => {
     if (notice?.kind === 'offerDeclined') {
       const { albumId, photoIds } = notice

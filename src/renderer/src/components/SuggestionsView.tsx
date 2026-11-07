@@ -221,7 +221,8 @@ export function SuggestionsView(props: Props) {
       return (
         <div className="merge-bar">
           <span className="hint">
-            Won’t offer these {notice.photoIds.length.toLocaleString()} photos for “{notice.albumName}” again.
+            Won’t offer {notice.photoIds.length === 1 ? 'this photo' : `these ${notice.photoIds.length.toLocaleString()} photos`} for “{notice.albumName}”
+            again.
           </span>
           <button className="link" onClick={props.onUndo}>
             Undo

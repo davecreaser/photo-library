@@ -1,6 +1,6 @@
 # 0004: Collapsible sidebar sections
 
-Status: approved
+Status: done
 Issue: #41
 
 ## Problem

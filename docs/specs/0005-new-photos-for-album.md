@@ -1,6 +1,6 @@
 # 0005: New photos for an album
 
-Status: approved
+Status: done
 Issue: #19
 
 ## Problem

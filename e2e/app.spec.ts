@@ -1,6 +1,7 @@
 // End-to-end: the real built app, driven like a user, against a synthetic library.
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createContentLibrary, createEdgeLibrary, createLibrary, createManyFoldersLibrary, fingerprint, LONG_FOLDER, type Library } from './library.ts'
@@ -585,6 +586,58 @@ test('sidebar sections (spec 0004): Albums and Tags collapse, People has no togg
   await launch(lib.root, NO_MODELS())
   await expect(page.getByRole('button', { name: 'Show albums' })).toBeVisible()
   await expect(page.locator('.nav-item.album')).toHaveCount(0)
+})
+
+test('sidebar sections (spec 0004): People collapsed by default, toggle does not navigate, active when collapsed, choice survives relaunch', async () => {
+  test.setTimeout(240_000)
+  await app.close()
+  await launch(lib.root, NO_MODELS())
+  await chooseLibrary()
+  await app.close()
+  // Name two people directly in the app's own database (generated photos have no faces to recognise).
+  const db = new DatabaseSync(join(dataDir, 'library.db'))
+  const photoIds = (db.prepare('SELECT id FROM photos WHERE present = 1 ORDER BY id LIMIT 2').all() as { id: number }[]).map((r) => r.id)
+  expect(photoIds.length).toBe(2)
+  for (const [i, name] of ['Alex Example', 'Sam Sample'].entries()) {
+    const person = db.prepare('INSERT INTO people (name) VALUES (?)').run(name).lastInsertRowid
+    db.prepare("INSERT INTO faces (photo_id, x, y, w, h, score, person_id, assigned_by) VALUES (?, 0.1, 0.1, 0.2, 0.2, 0.9, ?, 'user')").run(
+      photoIds[i],
+      person
+    )
+  }
+  db.close()
+  await launch(lib.root, NO_MODELS())
+  const person = page.locator('.sidebar .nav-item.person', { hasText: 'Alex Example' })
+  const peopleRow = page.locator('.sidebar .nav-item', { hasText: 'People' }).first()
+  // AC-2: collapsed by default; AC-4: the count stays.
+  const show = page.getByRole('button', { name: 'Show people' })
+  await expect(show).toHaveAttribute('aria-expanded', 'false')
+  await expect(person).toHaveCount(0)
+  await expect(peopleRow.locator('.count')).toHaveText('2')
+  // AC-1: the toggle expands without opening the People view; the row itself still opens it.
+  await show.click()
+  await expect(person).toBeVisible()
+  await expect(page.locator('.sidebar .nav-item.person')).toHaveCount(2)
+  await expect(peopleRow).not.toHaveClass(/active/)
+  await page.getByRole('button', { name: 'Hide people' }).click()
+  await expect(person).toHaveCount(0)
+  await expect(peopleRow).not.toHaveClass(/active/)
+  await peopleRow.locator('.count').click()
+  await expect(peopleRow).toHaveClass(/active/)
+  // AC-5: viewing a person while collapsed highlights the People row; collapsing never changes the view.
+  await page.getByRole('button', { name: 'Show people' }).click()
+  await person.click()
+  await expect(person).toHaveClass(/active/)
+  await page.getByRole('button', { name: 'Hide people' }).click()
+  await expect(person).toHaveCount(0)
+  await expect(peopleRow).toHaveClass(/active/)
+  await expect(page.locator('.grid .tile')).toHaveCount(1)
+  // AC-7: an explicit choice (open) wins over the default after relaunch.
+  await page.getByRole('button', { name: 'Show people' }).click()
+  await app.close()
+  await launch(lib.root, NO_MODELS())
+  await expect(page.getByRole('button', { name: 'Hide people' })).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.sidebar .nav-item.person', { hasText: 'Alex Example' })).toBeVisible()
 })
 
 test('albums move into other albums by drag and by “Move to…”; deleting a parent keeps its sub-albums', async () => {

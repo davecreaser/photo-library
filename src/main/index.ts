@@ -15,6 +15,7 @@ import { PhotoSearch } from './photoSearch.ts'
 import { ContentModelWorker } from './contentModelWorker.ts'
 import createContentWorker from './contentWorker.ts?nodeWorker'
 import type { ClockCorrection, LibraryInfo, PhotoFilter } from '../shared/types.ts'
+import { parseSidebarSections, type SidebarSections } from '../shared/sidebarSections.ts'
 
 // photo://thumb/<id> and photo://full/<id> serve images to the UI.
 protocol.registerSchemesAsPrivileged([{ scheme: 'photo', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
@@ -171,6 +172,11 @@ function registerIpc(): void {
     return libraryInfo()
   })
   ipcMain.handle('scan:start', () => void startScan())
+
+  ipcMain.handle('sidebar:get', () => parseSidebarSections(db.getSetting('sidebarSections')))
+  ipcMain.handle('sidebar:set', (_e, s: SidebarSections) => {
+    db.setSetting('sidebarSections', JSON.stringify(parseSidebarSections(JSON.stringify(s))))
+  })
 
   ipcMain.handle('ignore:get', () => JSON.parse(db.getSetting('ignoredFolders') ?? JSON.stringify(DEFAULT_IGNORED)) as string[])
   ipcMain.handle('ignore:set', async (_e, rules: string[]) => {

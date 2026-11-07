@@ -13,6 +13,7 @@ import type {
   Tag,
   TimelineMonth
 } from '../../shared/types.ts'
+import { DEFAULT_SIDEBAR_SECTIONS, type SidebarSections } from '../../shared/sidebarSections.ts'
 import { Sidebar } from './components/Sidebar.tsx'
 import { PhotoGrid } from './components/PhotoGrid.tsx'
 import { Viewer } from './components/Viewer.tsx'
@@ -47,6 +48,11 @@ const api = window.api
 
 export function App() {
   const [library, setLibrary] = useState<LibraryInfo | null>(null)
+  // Loaded before the first paint of the sidebar, so it never flashes the wrong state (spec 0004).
+  const [sections, setSections] = useState<SidebarSections | null>(null)
+  useEffect(() => {
+    api.getSidebarSections().then(setSections, () => setSections(DEFAULT_SIDEBAR_SECTIONS))
+  }, [])
   const [scan, setScan] = useState<ScanProgress | null>(null)
   const [view, setView] = useState<View>({ kind: 'all' })
   const [search, setSearch] = useState('')
@@ -260,7 +266,7 @@ export function App() {
     }
   })()
 
-  if (!library) return null
+  if (!library || !sections) return null
   if (!library.basePath) {
     return (
       <Welcome
@@ -311,6 +317,11 @@ export function App() {
 
       <Sidebar
         library={library}
+        sections={sections}
+        onSectionsChange={(next) => {
+          setSections(next)
+          void api.setSidebarSections(next)
+        }}
         view={view}
         albums={albums}
         tags={tags}

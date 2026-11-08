@@ -1,6 +1,6 @@
 # 0007: Save copies to a folder
 
-Status: approved
+Status: done
 Issue: #7
 
 ## Problem

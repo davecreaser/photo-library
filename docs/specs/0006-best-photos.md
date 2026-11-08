@@ -1,6 +1,6 @@
 # 0006: Best photos
 
-Status: draft
+Status: approved
 Issue: #6
 
 ## Problem
@@ -119,4 +119,4 @@ Reuses the album and suggestion header actions, `PhotoGrid`, the viewer info pan
 
 ## Decisions
 
-- (None yet; the owner's answers go here.)
+- The owner replied `go` with no changes, so the recommended answers to questions 1–9 apply: no eyes-open (1); default count `clamp(10%, 12, 60)`, adjustable (2); Make album is the only way to keep a selection (3); a starred photo wins its look-alike group (4); albums and suggestions only (5); quality is measured inside the single analysis pass (6); moments, signals, repetition avoidance and Focus (7); capped lean towards the user's own stars, on by default (8); edits do not train later picks (9).

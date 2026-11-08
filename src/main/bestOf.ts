@@ -6,9 +6,9 @@ import type { BestOfReason } from '../shared/types.ts'
 
 // --- Constants to tune against real trips (spec 0006, Assumptions to watch) ---
 /** Look-alikes: content cosine at or above this, and within LOOKALIKE_WINDOW_MS of the next photo in the group. */
-export const LOOKALIKE_MIN_SCORE = 0.9
+export const LOOKALIKE_MIN_SCORE = 0.93
 /** Undated photos have no time to confirm a look-alike, so they need a closer match. */
-export const LOOKALIKE_MIN_SCORE_UNDATED = 0.95
+export const LOOKALIKE_MIN_SCORE_UNDATED = 0.97
 export const LOOKALIKE_WINDOW_MS = 10 * 60_000
 export const LOOKALIKE_MAX_GROUP = 30
 const LOOKALIKE_LOOKBACK = 6

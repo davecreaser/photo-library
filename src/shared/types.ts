@@ -226,6 +226,8 @@ export interface Api {
   getPhotosByIds(ids: number[]): Promise<Photo[]>
   /** Makes an ordinary album "Best of <name>" with these photos; never overwrites. */
   makeBestOfAlbum(source: BestOfSource, photoIds: number[]): Promise<Album>
+  /** More photos have been measured (throttled), so a Best of view can refresh. */
+  onBestOfProgress(cb: () => void): () => void
   getLeanTowardsStars(): Promise<{ on: boolean; stars: number; enough: boolean }>
   setLeanTowardsStars(on: boolean): Promise<void>
   /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */

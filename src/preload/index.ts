@@ -6,6 +6,11 @@ const api: Api = {
   getLookalikes: (source) => ipcRenderer.invoke('bestOf:lookalikes', source),
   getPhotosByIds: (ids) => ipcRenderer.invoke('photos:byIds', ids),
   makeBestOfAlbum: (source, ids) => ipcRenderer.invoke('bestOf:makeAlbum', source, ids),
+  onBestOfProgress: (cb) => {
+    const listener = () => cb()
+    ipcRenderer.on('bestOf:progress', listener)
+    return () => ipcRenderer.removeListener('bestOf:progress', listener)
+  },
   getLeanTowardsStars: () => ipcRenderer.invoke('bestOf:lean'),
   setLeanTowardsStars: (on) => ipcRenderer.invoke('bestOf:setLean', on),
   getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),

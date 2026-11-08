@@ -88,12 +88,15 @@ export function PhotoGrid({
   const stacks = useMemo(() => {
     const lead = new Map<number, number[]>()
     const hidden = new Set<number>()
+    const loaded = new Set(photos.map((p) => p.id))
     for (const g of stack ?? []) {
+      // A group is stacked only once its best photo is on screen, so no photo is hidden without its stack.
+      if (!loaded.has(g[0])) continue
       lead.set(g[0], g)
       g.slice(1).forEach((id) => hidden.add(id))
     }
     return { lead, hidden }
-  }, [stack])
+  }, [stack, photos])
   const shown = useMemo(() => (stacks.hidden.size === 0 ? photos : photos.filter((p) => !stacks.hidden.has(p.id))), [photos, stacks])
 
   useEffect(() => onPhotosLoaded(shown), [shown])

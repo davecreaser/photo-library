@@ -25,12 +25,14 @@ interface Props {
   onOpenAlbum: (id: number) => void
   /** An album was made from the pick (the sidebar needs to list it). */
   onMade: () => void
+  /** True while something above this view (the photo viewer) owns the keyboard. */
+  suspended: boolean
   /** Bumped when photos may have changed under us (analysis, stars). */
   version: number
 }
 
 /** The Best of view (spec 0006): a pick of an album's photos, which the user can adjust and keep as an album. */
-export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum, onMade, version }: Props) {
+export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum, onMade, suspended, version }: Props) {
   const [view, setView] = useState<View | null>(null)
   const [slow, setSlow] = useState(false)
   const [count, setCount] = useState<number | null>(null)
@@ -44,7 +46,15 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
   const [strip, setStrip] = useState<Photo[]>([])
   const [adding, setAdding] = useState(false)
   const [others, setOthers] = useState<Photo[]>([])
+  const [moreToAdd, setMoreToAdd] = useState(false)
+  const pagesLoaded = useRef(0)
   const request = useRef(0)
+  // More photos measured while the view is open: refresh the pick and the "still reading" count.
+  const [tick, setTick] = useState(0)
+  useEffect(() => api.onBestOfProgress(() => setTick((t) => t + 1)), [])
+  const lastRemoved = useRef<{ id: number; shrank: boolean }[]>([])
+  const hovered = useRef<number | null>(null)
+  const stripRequest = useRef(0)
   const sourceKey = JSON.stringify(source)
 
   const edited = fixed.length > 0 || exclude.length > 0
@@ -82,19 +92,33 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
       })
       .catch(() => id === request.current && setSlow(false))
     return () => clearTimeout(timer)
-  }, [sourceKey, count, focus, fixed.join(), exclude.join(), version])
+  }, [sourceKey, count, focus, fixed.join(), exclude.join(), version, tick])
 
-  const remove = useCallback((id: number) => {
+  // Removing a photo makes the pick one smaller (down to the minimum), rather than filling its place.
+  const remove = (id: number) => {
+    const shrank = !!view && view.count > MIN_COUNT
+    lastRemoved.current.push({ id, shrank })
     setFixed((f) => f.filter((x) => x !== id))
     setExclude((e) => (e.includes(id) ? e : [...e, id]))
-  }, [])
+    if (shrank && view) setCount(view.count - 1)
+  }
+  const undoRemove = () => {
+    const last = lastRemoved.current.pop()
+    if (!last || !view) return
+    setExclude((e) => e.filter((x) => x !== last.id))
+    setFixed((f) => (f.includes(last.id) ? f : [...f, last.id]))
+    if (last.shrank) setCount(view.count + 1)
+  }
 
-  // Esc leaves the view (asking first after edits).
+  // Esc leaves the view (asking first after edits); Delete removes the photo under the pointer, ⌘Z / Ctrl+Z puts it back.
   const [leaving, setLeaving] = useState(false)
   const leave = () => (edited && !made ? setLeaving(true) : onBack())
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !(e.target instanceof HTMLInputElement)) leave()
+      if (suspended || adding || e.target instanceof HTMLInputElement) return
+      if (e.key === 'Escape') leave()
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && hovered.current !== null) remove(hovered.current)
+      else if (e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey)) undoRemove()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -122,19 +146,30 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
   const openStrip = async (photo: Photo) => {
     const group = view.groups.find((g) => g.includes(photo.id))
     if (!group) return
+    const id = ++stripRequest.current
     setSwapping(photo.id)
-    setStrip(await api.getPhotosByIds(group.filter((id) => id !== photo.id)))
+    const photos = await api.getPhotosByIds(group.filter((x) => x !== photo.id))
+    if (id === stripRequest.current) setStrip(photos)
   }
   const swap = (out: number, into: Photo) => {
     setExclude((e) => [...e.filter((x) => x !== into.id), ...(e.includes(out) ? [] : [out])])
     setFixed((f) => [...f.filter((x) => x !== out), into.id])
     setSwapping(null)
   }
-  const openAdd = async () => {
-    setAdding(true)
+  // The picker pages through the whole source, however large (it skips what is already picked).
+  const ADD_PAGE = 200
+  const loadAdd = async (offset: number) => {
+    const filter = source.kind === 'album' ? { albumId: source.id } : { suggestionId: source.id }
+    const page = await api.queryPhotos({ ...filter, offset, limit: ADD_PAGE })
     const chosen = new Set(view.photos.map((p) => p.id))
-    const page = await api.queryPhotos(source.kind === 'album' ? { albumId: source.id, limit: 400 } : { suggestionId: source.id, limit: 400 })
-    setOthers(page.photos.filter((p) => !chosen.has(p.id)))
+    setOthers((prev) => [...(offset === 0 ? [] : prev), ...page.photos.filter((p) => !chosen.has(p.id))])
+    setMoreToAdd(offset + page.photos.length < page.total)
+  }
+  const openAdd = async () => {
+    pagesLoaded.current = 0
+    setAdding(true)
+    setOthers([])
+    await loadAdd(0)
   }
   const reset = () => {
     setFixed([])
@@ -169,7 +204,13 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
     return (
       <div key={p.id} style={{ display: 'contents' }}>
         {heading && <div className="grid-divider">{heading}</div>}
-        <div className="tile" title={reason ? reasonText(reason) : ''} onClick={() => onOpen(i)}>
+        <div
+          className="tile"
+          title={reason ? reasonText(reason) : ''}
+          onClick={() => onOpen(i)}
+          onMouseEnter={() => (hovered.current = p.id)}
+          onMouseLeave={() => (hovered.current = null)}
+        >
           <img src={`photo://thumb/${p.id}`} loading="lazy" decoding="async" alt="" />
           {p.favorite && <span className="fav-badge">★</span>}
           <button
@@ -303,6 +344,16 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
                 </div>
               ))}
             </div>
+            {moreToAdd && (
+              <button
+                onClick={() => {
+                  pagesLoaded.current += 1
+                  void loadAdd(pagesLoaded.current * ADD_PAGE)
+                }}
+              >
+                Show more
+              </button>
+            )}{' '}
             <button onClick={() => setAdding(false)}>Cancel</button>
           </div>
         </div>

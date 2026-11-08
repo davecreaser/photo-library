@@ -2,7 +2,7 @@
 // photos), then the database and service around it. Each test names the acceptance criteria it proves.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,11 @@ import { LibraryDb, type FileMeta } from '../src/main/db.ts'
 import { Organiser } from '../src/main/organiser.ts'
 import { BestOfService } from '../src/main/bestOfService.ts'
 import { QUALITY_VERSION } from '../src/main/quality.ts'
+import sharp from 'sharp'
+import { scanLibrary } from '../src/main/scanner.ts'
+import { ImageCache } from '../src/main/thumbnails.ts'
+import { People } from '../src/main/people.ts'
+import { Analysis } from '../src/main/analysis.ts'
 import { bestOf, defaultCount, lookalikeGroups, tasteDirection, type BestOfPhoto } from '../src/main/bestOf.ts'
 
 installFsGuard({ allowedRoots: () => [tmpdir()], protectedRoots: () => [] })
@@ -401,4 +406,42 @@ test('AC-12: a library from the previous version keeps albums, tags, names and s
   assert.deepEqual(db.qualityProgress(QUALITY_VERSION), { done: 0, total: 3 }, 'every present photo gets measured')
   db.close()
   rmSync(lib.file, { force: true })
+})
+
+test('AC-1, AC-11: the analysis pass measures quality once, even with no models; unreadable photos are recorded; ignoring a folder drops scores', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pl-bestof-an-'))
+  const photos = join(root, 'photos')
+  const app = join(root, 'app')
+  const noModels = join(root, 'no-models')
+  for (const d of [join(photos, 'keep'), join(photos, 'secret'), app, noModels]) mkdirSync(d, { recursive: true })
+  const stripes = Buffer.alloc(300 * 200 * 3)
+  for (let i = 0; i < 300 * 200; i++) stripes.fill(Math.floor(i / 3) % 12 < 6 ? 40 : 210, i * 3, i * 3 + 3)
+  const base = sharp(stripes, { raw: { width: 300, height: 200, channels: 3 } })
+  writeFileSync(join(photos, 'keep', 'sharp.jpg'), await base.clone().jpeg({ quality: 95 }).toBuffer())
+  writeFileSync(join(photos, 'keep', 'blurred.jpg'), await base.clone().blur(6).jpeg({ quality: 95 }).toBuffer())
+  writeFileSync(join(photos, 'keep', 'broken.jpg'), Buffer.from('this is not a photo'))
+  writeFileSync(join(photos, 'secret', 'hidden.jpg'), await base.clone().jpeg({ quality: 90 }).toBuffer())
+
+  const db = new LibraryDb(join(app, 'library.db'))
+  const people = new People(db, noModels, join(app, 'cache', 'faces'), () => {})
+  const analysis = new Analysis({ db, people, images: new ImageCache(join(app, 'cache')), modelsDir: noModels, packaged: false, onContentProgress: () => {} })
+  db.setSetting('basePath', photos)
+  await scanLibrary(db, photos, () => {})
+  await analysis.kick()
+  const qualityOf = (name: string) => {
+    const p = db.queryPhotos({ text: name }).photos[0]
+    return db.bestOfInputs([p.id], null, QUALITY_VERSION)[0].quality
+  }
+  assert.ok((qualityOf('sharp.jpg') as number) > (qualityOf('blurred.jpg') as number), 'sharp beats blurred')
+  assert.equal(qualityOf('broken.jpg'), null, 'unreadable: recorded, no score')
+  assert.deepEqual(db.qualityProgress(QUALITY_VERSION), { done: 4, total: 4 })
+  assert.equal(db.photosNeedingAnalysis({ faces: null, content: null, quality: QUALITY_VERSION }, 10).length, 0, 'measured once')
+
+  db.setSetting('ignoredFolders', JSON.stringify(['secret']))
+  await scanLibrary(db, photos, () => {})
+  assert.deepEqual(db.qualityProgress(QUALITY_VERSION), { done: 3, total: 3 }, 'the ignored photo’s score is forgotten with it')
+  const count = (db as unknown as { db: DatabaseSync }).db.prepare('SELECT count(*) AS n FROM photo_quality').get() as { n: number }
+  assert.equal(count.n, 3)
+  db.close()
+  rmSync(root, { recursive: true, force: true })
 })

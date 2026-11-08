@@ -177,10 +177,8 @@ export function App() {
     view.kind === 'album' ? (albums.find((a) => a.id === view.id)?.photoCount ?? 0) : (suggested.find((e) => e.id === (view as { id: string }).id)?.count ?? 0)
   const sourceKey = bestOfSource ? JSON.stringify(bestOfSource) : ''
   useEffect(() => {
-    if (!stackLookalikes || !bestOfSource) {
-      setLookalikeGroups([])
-      return
-    }
+    setLookalikeGroups([])
+    if (!stackLookalikes || !bestOfSource) return
     let current = true
     void api.getLookalikes(bestOfSource).then(
       (g) => current && setLookalikeGroups(g),
@@ -649,6 +647,7 @@ export function App() {
             onBack={() => navigate(view.source.kind === 'album' ? { kind: 'album', id: view.source.id } : { kind: 'suggestion', id: view.source.id }, true)}
             onOpenAlbum={(id) => navigate({ kind: 'album', id })}
             onMade={refreshAll}
+            suspended={viewerIndex !== null}
           />
         ) : openGroup ? (
           <LookalikeGroup ids={openGroup} onPhotosLoaded={setPhotos} onOpen={setViewerIndex} onBack={() => setOpenGroup(null)} />

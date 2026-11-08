@@ -93,14 +93,16 @@ export class BestOfService {
 
   /** Makes "Best of <name>" (numbered if taken), nested under the source album; never overwrites. */
   makeAlbum(source: BestOfSource, photoIds: number[]): Album {
-    const { name, albumId } = this.resolve(source)
+    const { name, albumId, ids } = this.resolve(source)
+    const inSource = new Set(ids)
+    const chosen = photoIds.filter((id) => inSource.has(id))
     const existing = new Set(this.db.listAlbums().map((a) => a.name.toLowerCase()))
     const base = `Best of ${name}`
     let candidate = base
     for (let n = 2; existing.has(candidate.toLowerCase()); n++) candidate = `${base} ${n}`
     return this.db.transaction(() => {
       const album = this.db.createAlbum(candidate, albumId)
-      this.db.addToAlbum(album.id, photoIds)
+      this.db.addToAlbum(album.id, chosen)
       return { ...album, photoCount: this.db.albumPhotoIds(album.id).length }
     })
   }

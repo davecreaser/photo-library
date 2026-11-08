@@ -31,6 +31,14 @@ let bestOfService: BestOfService
 let window: BrowserWindow | null = null
 let currentScan: Promise<void> | null = null
 let scanAgain = false
+let lastQualityEvent = 0
+/** Tells the window that more photos have been measured (at most every 2 seconds). */
+function sendQualityProgress(): void {
+  const now = Date.now()
+  if (now - lastQualityEvent < 2000) return
+  lastQualityEvent = now
+  window?.webContents.send('bestOf:progress')
+}
 
 // Installed before anything else runs: from here on, no code in this process
 // (ours or a dependency's) can write, move or delete inside a photo folder.
@@ -303,6 +311,7 @@ app.whenReady().then(() => {
     modelsDir,
     packaged: app.isPackaged,
     onContentProgress: (p) => window?.webContents.send('content:progress', p),
+    onQualityMeasured: () => sendQualityProgress(),
     // The model runs on its own thread: it would otherwise block this one, which also runs the window.
     loadContentModel: (dir) => ContentModelWorker.start(createContentWorker, dir)
   })

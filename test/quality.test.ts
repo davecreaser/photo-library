@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
-import { decodeForAnalysis } from '../src/main/decode.ts'
+import { decodeForAnalysis, decodeForQuality } from '../src/main/decode.ts'
 import { measureQuality, qualityScore } from '../src/main/quality.ts'
 
 /** A generated "scene": coloured blocks and fine stripes, so there are edges to lose. */
@@ -45,12 +45,12 @@ test('AC-1: an almost black or almost white photo scores lower than a well expos
   assert.ok(qualityScore(good) > qualityScore(white))
 })
 
-test('AC-1: the same photo measured at the content size and at the face size gives similar scores', async () => {
+test('AC-1: the same photo measured on the quality decode and on the face decode gives the same scores', async () => {
   const buf = await scene()
-  const a = await measure(buf, false)
+  const a = measureQuality(await decodeForQuality(buf))
   const b = await measure(buf, true)
-  assert.ok(Math.abs(a.sharpness - b.sharpness) < 0.3)
-  assert.ok(Math.abs(a.exposure - b.exposure) < 0.1)
+  assert.ok(Math.abs(a.sharpness - b.sharpness) < 0.1, `${a.sharpness} vs ${b.sharpness}`)
+  assert.ok(Math.abs(a.exposure - b.exposure) < 0.05)
 })
 
 test('AC-1: bigger faces help a little, and scores stay within 0..1', () => {

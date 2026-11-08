@@ -19,8 +19,9 @@ export function LeanDialog({ onClose }: { onClose: () => void }) {
                 type="checkbox"
                 checked={lean.on}
                 onChange={async (e) => {
-                  await api.setLeanTowardsStars(e.target.checked)
-                  setLean({ ...lean, on: e.target.checked })
+                  const on = e.target.checked
+                  setLean({ ...lean, on })
+                  await api.setLeanTowardsStars(on)
                 }}
               />{' '}
               Lean towards what I star

@@ -337,6 +337,7 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
                   onClick={() => {
                     setFixed((f) => [...f, p.id])
                     setExclude((e) => e.filter((x) => x !== p.id))
+                    setCount(Math.min(view.total, view.count + 1)) // adding makes the pick one bigger
                     setAdding(false)
                   }}
                 >

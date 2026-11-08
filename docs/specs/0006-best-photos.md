@@ -1,6 +1,6 @@
 # 0006: Best photos
 
-Status: approved
+Status: done
 Issue: #6
 
 ## Problem
@@ -120,3 +120,4 @@ Reuses the album and suggestion header actions, `PhotoGrid`, the viewer info pan
 ## Decisions
 
 - The owner replied `go` with no changes, so the recommended answers to questions 1–9 apply: no eyes-open (1); default count `clamp(10%, 12, 60)`, adjustable (2); Make album is the only way to keep a selection (3); a starred photo wins its look-alike group (4); albums and suggestions only (5); quality is measured inside the single analysis pass (6); moments, signals, repetition avoidance and Focus (7); capped lean towards the user's own stars, on by default (8); edits do not train later picks (9).
+- Built as specified, with these choices where the spec left room: quality is measured on its own small aspect-preserving decode (256 px) unless faces need the 2048 px decode, so scores don't depend on which analyses ran; look-alike thresholds are `LOOKALIKE_MIN_SCORE` 0.93 (undated 0.97), calibrated with `scripts/model-eval/lookalikes.ts` on generated scenes and to be re-checked on real trips; the moment break similarity is 0.55; removing a photo in the Best of view makes the pick one smaller, adding makes it one bigger, swapping keeps the size; Delete removes the photo under the pointer and ⌘Z / Ctrl+Z puts it back; reasons for the moment kind read "One of 3 from this moment" (no moment names). The stepper's top is the set size, but a pick is capped at one photo per look-alike group, so it can show fewer than the stepper says in a very repetitive set.

@@ -4,7 +4,17 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createContentLibrary, createEdgeLibrary, createLibrary, photo, createManyFoldersLibrary, fingerprint, LONG_FOLDER, type Library } from './library.ts'
+import {
+  createContentLibrary,
+  createEdgeLibrary,
+  createLibrary,
+  createTripLibrary,
+  photo,
+  createManyFoldersLibrary,
+  fingerprint,
+  LONG_FOLDER,
+  type Library
+} from './library.ts'
 
 let lib: Library
 let before: string
@@ -837,4 +847,343 @@ test('new photos for an album (AC-1, AC-7): albums made by hand get none; deleti
   } finally {
     rmSync(own.root, { recursive: true, force: true })
   }
+})
+
+// --- best photos (spec 0006) ---
+
+/**
+ * Runs `body` against a trip library (30 photos in 5 scenes of 6 shots) held in an album called
+ * `albumName`, then checks the app changed nothing in it. `hasVectors` says whether the content
+ * model analysed the photos (look-alikes need content vectors).
+ */
+async function withTrip(albumName: string, body: (ctx: { hasVectors: boolean; albumId: number }) => Promise<void>) {
+  const trip = await createTripLibrary()
+  const tripBefore = fingerprint(trip.root)
+  try {
+    await app.close()
+    await launch(trip.root)
+    await chooseLibrary(trip.uniquePhotos)
+    const progress = await page.evaluate(() => window.api.getContentProgress())
+    const album = await page.evaluate((n) => window.api.createAlbum(n, null), albumName)
+    const all = await page.evaluate(() => window.api.queryPhotos({ limit: 100 } as never))
+    await page.evaluate(([a, i]) => window.api.addToAlbum(a as number, i as number[]), [album.id, all.photos.map((p: { id: number }) => p.id)] as const)
+    await page.reload()
+    await body({ hasVectors: progress.phase !== 'unavailable', albumId: album.id })
+  } finally {
+    await app.close()
+    expect(fingerprint(trip.root)).toBe(tripBefore)
+    rmSync(trip.root, { recursive: true, force: true })
+  }
+}
+
+const albumItem = (name: string) => page.locator('.sidebar .nav-item.album', { hasText: name })
+const tileCount = () => page.locator('.grid .tile:not(.add-tile)')
+const stepperValue = async () => Number(await page.getByLabel('How many photos').inputValue())
+
+test('best of (AC-3, AC-9): the button is disabled with a tooltip under 6 photos, on an album and a suggested album', async () => {
+  await chooseLibrary()
+  const small = await page.evaluate(() => window.api.createAlbum('Three', null))
+  const some = await page.evaluate(() => window.api.queryPhotos({ limit: 3 } as never))
+  await page.evaluate(([a, i]) => window.api.addToAlbum(a as number, i as number[]), [small.id, some.photos.map((p: { id: number }) => p.id)] as const)
+  await page.reload()
+  await albumItem('Three').click()
+  await expect(page.locator('.grid .tile')).toHaveCount(3)
+  const button = page.getByRole('button', { name: 'Best of', exact: true })
+  await expect(button).toBeDisabled()
+  await expect(button).toHaveAttribute('title', 'Not enough photos to choose from.')
+
+  await nav('Suggested albums').click()
+  await card('Poland').click() // 3 photos
+  await expect(page.locator('.grid .tile')).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Best of', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Best of', exact: true })).toHaveAttribute('title', 'Not enough photos to choose from.')
+})
+
+test('best of (AC-3, AC-5, AC-6, AC-7): view, stepper, remove shrinks, Add a photo, Reset, leave prompt, Make album nested, twice', async () => {
+  test.setTimeout(240_000)
+  await withTrip('Sintra', async () => {
+    await albumItem('Sintra').click()
+    await expect(tileCount()).toHaveCount(30)
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+
+    // Title, subtitle, default N = clamp(10% of 30, 12, 60) = 12.
+    await expect(page.locator('h1')).toHaveText('Best of Sintra')
+    await expect(page.locator('.best-of-bar .subtitle')).toHaveText(/^12 of 30 photos · \d+ moments?$/)
+    await expect(tileCount()).toHaveCount(12)
+    await expect(page.locator('.add-tile')).toContainText('Add a photo…')
+    await expect(page.getByLabel('Focus on…')).toHaveAttribute('placeholder', 'the kids, food, the beach')
+    await expect(page.getByRole('button', { name: 'Make album' })).toHaveAttribute(
+      'title',
+      'Creates a new album with these photos. Nothing is moved or changed on disk.'
+    )
+    await expect(page.getByRole('button', { name: 'Back to Sintra' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0)
+    // Every tile says why (AC-5), in the allowed words.
+    const reasons = await tileCount().evaluateAll((els) => els.map((e) => e.getAttribute('title')))
+    for (const r of reasons)
+      expect(r).toMatch(
+        /^(Sharpest of \d+ similar photos|One of \d+ from this moment|The one from this moment|Includes .+|You starred this one|Matches “.+”|Something different from the rest|You chose this one)$/
+      )
+    // Capture-time order, with day headings (two days).
+    await expect.poll(() => page.locator('.grid-divider').count()).toBeGreaterThanOrEqual(2) // the trip spans several days
+
+    // Stepper: + and − change the count; limits are 6 and the set size.
+    await page.getByRole('button', { name: 'More photos' }).click()
+    await expect(tileCount()).toHaveCount(13)
+    await expect(page.getByRole('button', { name: 'Reset' })).toBeVisible() // a changed count can be reset
+    await page.getByLabel('How many photos').fill('6')
+    await expect(tileCount()).toHaveCount(6)
+    await expect(page.getByRole('button', { name: 'Fewer photos' })).toBeDisabled()
+    await page.getByLabel('How many photos').fill('99')
+    // At most one photo per look-alike group, so with vectors fewer than 30 can be shown.
+    await expect.poll(() => page.locator('.best-of-bar .subtitle').textContent()).toMatch(/ of 30 photos/)
+    // The stepper still reads 30 (the set size) though only the distinct photos are shown.
+    await expect(page.getByRole('button', { name: 'More photos' })).toBeDisabled()
+    await page.getByRole('button', { name: 'Reset' }).click()
+    await expect(tileCount()).toHaveCount(12)
+    await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0)
+
+    // Remove with the tile's ✕ shrinks the pick by one (repeated clicks keep shrinking, never below 6).
+    const firstTitle = await tileCount().first().getAttribute('title')
+    await tileCount().first().hover()
+    await tileCount().first().getByRole('button', { name: 'Remove from this pick' }).click()
+    await expect(tileCount()).toHaveCount(11)
+    await expect(page.locator('.best-of-bar .subtitle')).toHaveText(/^11 of 30 photos/)
+    expect(firstTitle).toBeTruthy()
+    await page.getByRole('button', { name: 'Reset' }).waitFor()
+
+    // Add a photo… picks from the rest of the set (the removed one included, none already picked).
+    await page.locator('.add-tile').click()
+    const picker = page.locator('.modal')
+    await expect(picker.locator('.tile')).toHaveCount(30 - 11)
+    const addedSrc = await picker.locator('.tile img').first().getAttribute('src')
+    await picker.locator('.tile').first().click()
+    await expect(picker).toHaveCount(0)
+    await expect(page.locator(`.grid .tile img[src="${addedSrc}"]`)).toHaveCount(1) // the added photo is in the pick
+    // BUG (reported): removing shrank the pick to 11 but adding does not grow it back; the added photo displaces an automatic one.
+    await expect.soft(tileCount(), 'adding a photo should make the pick one bigger').toHaveCount(12)
+    const picked = await tileCount().count()
+
+    // Leaving after edits asks first; Stay keeps the view.
+    await page.getByRole('button', { name: 'Back to Sintra' }).click()
+    await expect(page.locator('.notice-line')).toContainText('Leave without making an album?')
+    await page.getByRole('button', { name: 'Stay' }).click()
+    await expect(page.locator('.notice-line')).toHaveCount(0)
+    await expect(tileCount()).toHaveCount(picked)
+
+    // Make album: a nested "Best of Sintra", the notice, Open album.
+    await page.getByRole('button', { name: 'Make album' }).click()
+    await expect(page.locator('.notice-line')).toContainText(`Made the album “Best of Sintra” with ${picked} photos.`)
+    await expect(page.getByRole('button', { name: 'Make album' })).toBeDisabled() // one click, one album
+    const albums = await page.evaluate(() => window.api.listAlbums())
+    const source = albums.find((a: { name: string }) => a.name === 'Sintra')
+    const made = albums.find((a: { name: string }) => a.name === 'Best of Sintra')
+    expect(made).toBeTruthy()
+    expect(made.parentId).toBe(source.id)
+    expect(made.photoCount).toBe(picked)
+    expect(source.photoCount).toBe(30) // the source is unchanged
+
+    // Making it again (after Reset) creates a second album with a numbered name; nothing is overwritten.
+    await page.getByRole('button', { name: 'Reset' }).click()
+    await page.getByRole('button', { name: 'Make album' }).click()
+    await expect(page.locator('.notice-line')).toContainText('Made the album “Best of Sintra 2” with 12 photos.')
+    const again = await page.evaluate(() => window.api.listAlbums())
+    expect(
+      again
+        .filter((a: { name: string }) => a.name.startsWith('Best of Sintra'))
+        .map((a: { name: string }) => a.name)
+        .sort()
+    ).toEqual(['Best of Sintra', 'Best of Sintra 2'])
+
+    await page.locator('.notice-line').getByRole('button', { name: 'Open album' }).click()
+    await expect(page.locator('h1')).toHaveText('Best of Sintra 2')
+    await expect(tileCount()).toHaveCount(12)
+    // Back out cleanly: made, so no leave prompt.
+    await albumItem('Sintra').first().click()
+    await expect(tileCount()).toHaveCount(30)
+  })
+})
+
+test('best of (AC-5): the viewer shows the reason line; Esc leaves an unedited view; edits last only while open', async () => {
+  test.setTimeout(240_000)
+  await withTrip('Sintra', async () => {
+    await albumItem('Sintra').click()
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await expect(tileCount()).toHaveCount(12)
+    const title = await tileCount().first().getAttribute('title')
+    await tileCount().first().click()
+    await expect(page.locator('.best-of-reason')).toHaveText(title!)
+    await page.keyboard.press('ArrowRight')
+    await expect(page.locator('.best-of-reason')).toHaveText((await tileCount().nth(1).getAttribute('title'))!)
+    await page.keyboard.press('Escape') // closes the viewer, not the view
+    await expect(page.locator('.best-of-reason')).toHaveCount(0)
+    await expect(page.locator('h1')).toHaveText('Best of Sintra')
+    // The viewer outside a Best of view has no reason line.
+    await page.keyboard.press('Escape')
+    await expect(page.locator('h1')).toHaveText('Sintra')
+    await tileCount().first().click()
+    await expect(page.locator('.best-of-reason')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    // Edits last until the view closes: remove one, leave, come back to the automatic pick.
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await tileCount().first().hover()
+    await tileCount().first().getByRole('button', { name: 'Remove from this pick' }).click()
+    await expect(tileCount()).toHaveCount(11)
+    await page.getByRole('button', { name: 'Back to Sintra' }).click()
+    await page.getByRole('button', { name: 'Leave' }).click()
+    await expect(page.locator('h1')).toHaveText('Sintra')
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await expect(tileCount()).toHaveCount(12)
+  })
+})
+
+test('best of (AC-3): a suggested album has a Best of view; Make album is a top-level album', async () => {
+  test.setTimeout(240_000)
+  const trip = await createTripLibrary()
+  const tripBefore = fingerprint(trip.root)
+  try {
+    await app.close()
+    await launch(trip.root)
+    await chooseLibrary(trip.uniquePhotos)
+    await nav('Suggested albums').click()
+    await card('Sintra Week').click()
+    await expect(page.locator('.grid .tile')).toHaveCount(30)
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await expect(page.locator('h1')).toHaveText('Best of Sintra Week')
+    await expect(tileCount()).toHaveCount(12)
+    await page.getByRole('button', { name: 'Make album' }).click()
+    await expect(page.locator('.notice-line')).toContainText('Made the album “Best of Sintra Week” with 12 photos.')
+    const made = (await page.evaluate(() => window.api.listAlbums())).find((a: { name: string }) => a.name === 'Best of Sintra Week')
+    expect(made.parentId).toBeNull()
+    expect(made.photoCount).toBe(12)
+    await page.getByRole('button', { name: 'Back to Sintra Week' }).click()
+    await expect(page.locator('h1')).toHaveText('Sintra Week')
+  } finally {
+    await app.close()
+    expect(fingerprint(trip.root)).toBe(tripBefore)
+    rmSync(trip.root, { recursive: true, force: true })
+  }
+})
+
+test('best of (AC-2, AC-8): "Show look-alikes together" stacks tiles without changing the album; the stack opens its group', async () => {
+  test.setTimeout(240_000)
+  await withTrip('Sintra', async ({ hasVectors, albumId }) => {
+    await albumItem('Sintra').click()
+    await expect(tileCount()).toHaveCount(30)
+    const toggle = page.getByLabel('Show look-alikes together')
+    await expect(toggle).not.toBeChecked() // off by default
+    await toggle.check()
+    // Whatever the model finds, the album's count never changes.
+    await expect(albumItem('Sintra')).toContainText('30')
+    if (!hasVectors) {
+      test.info().annotations.push({ type: 'skipped', description: 'content model unavailable: no vectors, so no look-alikes' })
+      await expect(tileCount()).toHaveCount(30)
+      test.skip(true, 'content model unavailable: look-alike grouping needs content vectors')
+    }
+    const groups = await page.evaluate((id) => window.api.getLookalikes({ kind: 'album', id }), albumId)
+    expect(groups.length).toBeGreaterThan(0)
+    const hidden = groups.reduce((n: number, g: number[]) => n + g.length - 1, 0)
+    await expect(tileCount()).toHaveCount(30 - hidden)
+    await expect(page.locator('.tile .stack-badge')).toHaveCount(groups.length)
+    // Groups are chains of one scene: never more than the 6 shots of a cluster's scene, and every group has 2+.
+    for (const g of groups) expect(g.length).toBeGreaterThanOrEqual(2)
+    expect((await page.evaluate(() => window.api.listAlbums())).find((a: { id: number }) => a.id === albumId).photoCount).toBe(30)
+
+    const badge = page.locator('.tile .stack-badge').first()
+    const size = Number(await badge.textContent())
+    await badge.click()
+    await expect(page.locator('.grid-meta')).toContainText(`${size} similar photos`)
+    await expect(page.locator('.grid .tile')).toHaveCount(size)
+    await page.locator('.grid-meta').getByRole('button', { name: 'Back' }).click()
+    await toggle.uncheck()
+    await expect(tileCount()).toHaveCount(30)
+    await expect(page.locator('.tile .stack-badge')).toHaveCount(0)
+  })
+})
+
+test('best of (AC-2, AC-3, AC-6): the Best of view offers a similar photo to swap in; at most one photo per group', async () => {
+  test.setTimeout(240_000)
+  await withTrip('Sintra', async ({ hasVectors, albumId }) => {
+    test.skip(!hasVectors, 'content model unavailable: look-alike grouping needs content vectors')
+    await albumItem('Sintra').click()
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await expect(tileCount()).toHaveCount(12)
+    const groups: number[][] = await page.evaluate((id) => window.api.getLookalikes({ kind: 'album', id }), albumId)
+    expect(groups.length).toBeGreaterThan(0)
+    const badges = page.locator('.tile .stack-badge')
+    await expect(badges.first()).toBeVisible()
+    const picked = await page.evaluate(
+      async (id) => (await window.api.getBestOf({ source: { kind: 'album', id }, fixed: [], exclude: [] } as never)).photos.map((p: { id: number }) => p.id),
+      albumId
+    )
+    for (const g of groups) expect(picked.filter((id: number) => g.includes(id)).length).toBeLessThanOrEqual(1)
+
+    await badges.first().click()
+    const strip = page.locator('.swap-strip')
+    await expect(strip).toContainText('Pick another')
+    const choices = strip.locator('img')
+    await expect(choices.first()).toBeVisible()
+    const before = await tileCount().evaluateAll((els) => els.map((e) => e.querySelector('img')!.getAttribute('src')))
+    await choices.first().click()
+    await expect(strip).toHaveCount(0)
+    await expect(tileCount()).toHaveCount(12) // a swap keeps the count
+    const after = await tileCount().evaluateAll((els) => els.map((e) => e.querySelector('img')!.getAttribute('src')))
+    expect(after).not.toEqual(before)
+    await expect(page.locator('.tile .stack-badge').first()).toBeVisible()
+  })
+})
+
+test('best of (AC-4b): Focus on… refills the pick and clearing returns to the default (or says the model is not ready)', async () => {
+  test.setTimeout(240_000)
+  await withTrip('Sintra', async ({ hasVectors }) => {
+    await albumItem('Sintra').click()
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await expect(tileCount()).toHaveCount(12)
+    const focus = page.getByLabel('Focus on…')
+    await focus.fill('the beach')
+    if (!hasVectors) await expect(page.getByText('Search by content isn’t ready yet.')).toBeVisible()
+    await expect(tileCount()).toHaveCount(12) // a focus never changes how many
+    await page.getByRole('button', { name: 'Clear focus' }).click()
+    await expect(focus).toHaveValue('')
+    await expect(tileCount()).toHaveCount(12)
+    // The focus is not remembered after the view closes.
+    await focus.fill('food')
+    await page.getByRole('button', { name: 'Back to Sintra' }).click()
+    await page.getByRole('button', { name: 'Best of', exact: true }).click()
+    await expect(page.getByLabel('Focus on…')).toHaveValue('')
+  })
+})
+
+test('best of (AC-4a): "Best of settings…" toggles "Lean towards what I star" (on by default) and remembers it', async () => {
+  await chooseLibrary()
+  await page.getByRole('button', { name: 'Best of settings…' }).click()
+  const lean = page.locator('.modal').getByLabel('Lean towards what I star')
+  await expect(lean).toBeChecked()
+  await expect(page.locator('.modal')).toContainText('Uses only your own stars, on this computer.')
+  await expect(page.locator('.modal')).toContainText('you have 0')
+  await lean.click()
+  // The setting is saved...
+  await expect.poll(() => page.evaluate(() => window.api.getLeanTowardsStars())).toMatchObject({ on: false })
+  // ...and the checkbox should show it (BUG: LeanDialog reads e.target.checked after an await, when React has
+  // already reverted the controlled input, so the box stays ticked although the setting is off).
+  await expect(lean).not.toBeChecked()
+  await page.locator('.modal').getByRole('button', { name: 'Done' }).click()
+  await expect(page.locator('.modal')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Best of settings…' }).click()
+  await expect(page.locator('.modal').getByLabel('Lean towards what I star')).not.toBeChecked()
+  expect(await page.evaluate(() => window.api.getLeanTowardsStars())).toMatchObject({ on: false })
+})
+
+test('best of (AC-9, AC-11): an empty library and a library with a 0-photo album have no Best of; no data written beside the photos', async () => {
+  // Choose the sample library; an empty album shows no stack toggle trouble and a disabled Best of.
+  await chooseLibrary()
+  await page.evaluate(() => window.api.createAlbum('Empty', null))
+  await page.reload()
+  await albumItem('Empty').click()
+  await expect(page.getByRole('button', { name: 'Best of', exact: true })).toBeDisabled()
+  await page.getByLabel('Show look-alikes together').check() // nothing to stack, nothing breaks
+  await expect(page.locator('.empty')).toBeVisible()
+  // The photo folder's fingerprint is asserted in afterAll for this whole file.
+  expect(fingerprint(lib.root)).toBe(before)
 })

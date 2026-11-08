@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Api, ContentProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
 
 const api: Api = {
+  getBestOf: (r) => ipcRenderer.invoke('bestOf:get', r),
+  getLookalikes: (source) => ipcRenderer.invoke('bestOf:lookalikes', source),
+  getPhotosByIds: (ids) => ipcRenderer.invoke('photos:byIds', ids),
+  makeBestOfAlbum: (source, ids) => ipcRenderer.invoke('bestOf:makeAlbum', source, ids),
+  getLeanTowardsStars: () => ipcRenderer.invoke('bestOf:lean'),
+  setLeanTowardsStars: (on) => ipcRenderer.invoke('bestOf:setLean', on),
   getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),
   setSidebarSections: (s) => ipcRenderer.invoke('sidebar:set', s),
   getLibrary: () => ipcRenderer.invoke('library:get'),

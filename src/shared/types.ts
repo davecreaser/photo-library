@@ -219,6 +219,15 @@ export interface LibraryInfo {
 }
 
 export interface Api {
+  /** Best of an album or suggested album (spec 0006). Computed, never stored. */
+  getBestOf(request: BestOfRequest): Promise<BestOfView>
+  /** All look-alike groups of the source (photo ids, best first), for stacking them in a grid. */
+  getLookalikes(source: BestOfSource): Promise<number[][]>
+  getPhotosByIds(ids: number[]): Promise<Photo[]>
+  /** Makes an ordinary album "Best of <name>" with these photos; never overwrites. */
+  makeBestOfAlbum(source: BestOfSource, photoIds: number[]): Promise<Album>
+  getLeanTowardsStars(): Promise<{ on: boolean; stars: number; enough: boolean }>
+  setLeanTowardsStars(on: boolean): Promise<void>
   /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */
   getSidebarSections(): Promise<SidebarSections>
   setSidebarSections(s: SidebarSections): Promise<void>
@@ -298,4 +307,49 @@ export interface Api {
   listTags(): Promise<Tag[]>
   addTag(photoIds: number[], name: string): Promise<Tag>
   removeTag(photoIds: number[], tagId: number): Promise<void>
+}
+
+/** Why a photo is in a Best of pick (spec 0006, AC-5); the window words it. */
+export type BestOfReason =
+  | { kind: 'starred' }
+  | { kind: 'focus'; phrase: string }
+  | { kind: 'person'; name: string }
+  | { kind: 'lookalike'; count: number }
+  | { kind: 'moment'; count: number }
+  | { kind: 'different' }
+  | { kind: 'yours' }
+
+/** Where a Best of pick comes from: an album, or a suggested album (spec 0006). */
+export type BestOfSource = { kind: 'album'; id: number } | { kind: 'suggestion'; id: string }
+
+export interface BestOfRequest {
+  source: BestOfSource
+  /** How many photos; default depends on the set's size. */
+  count?: number
+  /** "Focus on…" words. */
+  focus?: string
+  /** Photos the user added (always in) and removed (never picked). */
+  fixed?: number[]
+  exclude?: number[]
+}
+
+export interface BestOfView {
+  /** The source album's or suggestion's name. */
+  name: string
+  /** Present photos in the source. */
+  total: number
+  count: number
+  defaultCount: number
+  /** Fewer than 6 photos: nothing to choose from. */
+  tooFew: boolean
+  /** The picks, in capture-time order. */
+  photos: Photo[]
+  reasons: Record<number, BestOfReason>
+  momentCount: number
+  /** Look-alike groups (photo ids, best first) that contain a pick. */
+  groups: number[][]
+  /** Photos of the source measured so far, of all of them. */
+  pending: { done: number; total: number }
+  /** Focus words were given but the content model isn't ready. */
+  focusUnavailable: boolean
 }

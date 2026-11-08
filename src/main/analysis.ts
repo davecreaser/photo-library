@@ -8,6 +8,7 @@ import type { ImageCache } from './thumbnails.ts'
 import { FACE_MODEL_VERSION, type DetectedFace, type FaceAnalyser } from './faces.ts'
 import { CONTENT_MODEL_VERSION, ContentModel, ContentModelUnavailable, type ContentEncoder } from './contentModel.ts'
 import { decodeForAnalysis, type RgbImage } from './decode.ts'
+import { measureQuality, QUALITY_VERSION } from './quality.ts'
 import type { ContentProgress } from '../shared/types.ts'
 
 const BATCH = 20
@@ -114,8 +115,7 @@ export class Analysis {
   private async pass(): Promise<void> {
     const faces = await this.o.people.analyser()
     const content = await this.contentModel()
-    if (!faces && !content) return
-    const versions = { faces: faces ? FACE_MODEL_VERSION : null, content: content ? CONTENT_MODEL_VERSION : null }
+    const versions = { faces: faces ? FACE_MODEL_VERSION : null, content: content ? CONTENT_MODEL_VERSION : null, quality: QUALITY_VERSION }
     this.doneAt = []
     this.startedAt = Date.now()
     let facesTouched = false
@@ -149,6 +149,16 @@ export class Analysis {
   private async analyse(photo: AnalysisSource, faces: FaceAnalyser | null, content: ContentEncoder | null): Promise<void> {
     const forFaces = !!faces && photo.needsFaces
     const image = await this.decode(photo, forFaces)
+    if (photo.needsQuality) {
+      // Measured from the pixels already decoded (spec 0006); an unreadable photo is recorded so it isn't retried.
+      let q = null
+      try {
+        if (image) q = measureQuality(image)
+      } catch {
+        // unreadable
+      }
+      this.o.db.saveQuality(photo.id, q, QUALITY_VERSION)
+    }
     if (forFaces) {
       let found: DetectedFace[] = []
       try {

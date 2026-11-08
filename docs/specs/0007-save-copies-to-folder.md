@@ -1,6 +1,6 @@
 # 0007: Save copies to a folder
 
-Status: draft
+Status: approved
 Issue: #7
 
 ## Problem
@@ -80,4 +80,12 @@ Empty state: the selection-bar button exists only with a selection; the album-he
 
 ## Decisions
 
-(Recorded when the owner answers the open questions.)
+The owner replied `go` without changes, so the recommended answers apply:
+
+1. Copies go into a new sub-folder of the chosen folder, named after the album (or "Photos") plus the date; if it exists, a number is added ("Sintra 2024-07-14 2").
+2. JPEGs at original size are copied byte for byte, keeping EXIF including location. The dialog says "JPEG copies keep each photo's information, including where it was taken": resized JPEGs keep their metadata too, but RAW/HEIC conversions carry only what the decoder provides, so the note speaks of JPEG copies.
+3. Size choices: Original, 4000, 2000, 1600 px.
+4. Plain numbers by default; the capture date is an option, off by default.
+5. An album export includes photos in albums inside it.
+
+Recorded in ADR 0010.

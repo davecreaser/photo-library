@@ -35,7 +35,13 @@ export async function openExport(dir: string, appDataFolder: string): Promise<Ex
       if (name !== basename(name) || name === '.' || name === '..') throw new Error(`Not a plain file name: ${name}`)
       const file = join(dir, name)
       assertWritable(file, 'write')
-      await writeFile(file, data, { flag: 'wx' })
+      try {
+        await writeFile(file, data, { flag: 'wx' })
+      } catch (e) {
+        // A half-written copy must not be mistaken for a good one (e.g. disk full). Never remove a file that was already there.
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') await rm(file, { force: true }).catch(() => {})
+        throw e
+      }
     },
     close: revokeExportRoot
   }

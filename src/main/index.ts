@@ -5,7 +5,7 @@ import { readdirSync, realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { assertWritable, installFsGuard } from './fsGuard.ts'
 import { openExport } from './appFiles.ts'
-import { planNames, runExport, safeFolderName } from './exporter.ts'
+import { planNames, runExport, safeFolderName, writeFailure } from './exporter.ts'
 import { exportOptionsFrom, EXPORT_OPTIONS_KEY } from './exportOptions.ts'
 import { LibraryDb, type Forgotten } from './db.ts'
 import { DEFAULT_IGNORED, normaliseRule } from './ignore.ts'
@@ -92,6 +92,16 @@ function insideAny(folder: string, roots: string[]): boolean {
 
 async function startExport(source: ExportSource, rawOptions: ExportOptions): Promise<ExportResult> {
   if (exporting) throw new Error('Another export is running')
+  const state = { cancel: false }
+  exporting = state
+  try {
+    return await chooseAndExport(source, rawOptions, state)
+  } finally {
+    if (exporting === state) exporting = null
+  }
+}
+
+async function chooseAndExport(source: ExportSource, rawOptions: ExportOptions, state: { cancel: boolean }): Promise<ExportResult> {
   const options = exportOptionsFrom(JSON.stringify(rawOptions))
   db.setSetting(EXPORT_OPTIONS_KEY, JSON.stringify(options))
   const photos = db.exportSources(exportPhotoIds(source))
@@ -117,8 +127,6 @@ async function startExport(source: ExportSource, rawOptions: ExportOptions): Pro
   for (let n = 2; taken.has(folderName.toLowerCase()); n++) folderName = `${base} ${n}`
   const folder = join(chosen, folderName)
 
-  const state = { cancel: false }
-  exporting = state
   const base0 = { folderName, requested: photos.length }
   try {
     const sink = await openExport(folder, dataDir)

@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { syncBuiltinESMExports } from 'node:module'
 import sharp from 'sharp'
 import { installFsGuard, ProtectedPathError } from '../src/main/fsGuard.ts'
 import { openExport } from '../src/main/appFiles.ts'
@@ -233,4 +234,23 @@ test('the grant ends with the export (AC-9)', async () => {
   const sink = await openExport(join(out, 'Grant'), appData)
   sink.close()
   await assert.rejects(async () => fs.writeFileSync(join(out, 'Grant', 'late.jpg'), 'x'), ProtectedPathError)
+})
+
+test('a failed write leaves no half-written copy behind (AC-7)', async () => {
+  const dest = join(out, 'Partial')
+  const sink = await openExport(dest, appData)
+  const real = fs.promises.writeFile
+  fs.promises.writeFile = (async (file: string, ...rest: unknown[]) => {
+    await real(file, 'half', { flag: 'wx' })
+    throw Object.assign(new Error('full'), { code: 'ENOSPC' })
+  }) as typeof real
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(() => sink.write('0001.jpg', Buffer.from('whole photo')), { code: 'ENOSPC' })
+  } finally {
+    fs.promises.writeFile = real
+    syncBuiltinESMExports()
+    sink.close()
+  }
+  assert.deepEqual(fs.readdirSync(dest), [])
 })

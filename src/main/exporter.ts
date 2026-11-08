@@ -99,6 +99,8 @@ export async function renderCopy(photo: ExportPhoto, maxSide: number, workDir: s
   }
 }
 
+const isJpegName = (path: string) => JPEG_EXTENSIONS.has(extname(path).toLowerCase())
+
 export interface ExportRun {
   status: 'done' | 'cancelled' | 'error'
   saved: number
@@ -107,7 +109,7 @@ export interface ExportRun {
   message?: string
 }
 
-function writeFailure(e: unknown): string {
+export function writeFailure(e: unknown): string {
   const code = (e as NodeJS.ErrnoException)?.code
   if (code === 'ENOSPC' || code === 'EDQUOT') return 'the disk is full'
   if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') return "that folder can't be written to"
@@ -130,14 +132,24 @@ export async function runExport(
   const skipped: ExportSkipped[] = []
   let saved = 0
   let done = 0
-  onProgress(0, files.length)
+  const progress = (d: number) => {
+    try {
+      onProgress(d, files.length)
+    } catch {
+      // The window may have closed; the export carries on.
+    }
+  }
+  progress(0)
   for (const file of files) {
     if (cancelled()) return { status: 'cancelled', saved, skipped }
     let data: Buffer | null = null
     try {
       data = await renderCopy(file.photo, options.maxSide, workDir)
     } catch {
-      skipped.push({ name: file.photo.path.split(/[/\\]/).pop() ?? file.name, reason: "couldn't be read" })
+      skipped.push({
+        name: file.photo.path.split(/[/\\]/).pop() ?? file.name,
+        reason: isJpegName(file.photo.path) ? "couldn't be read" : "couldn't be converted"
+      })
     }
     if (data) {
       try {
@@ -147,7 +159,7 @@ export async function runExport(
         return { status: 'error', saved, skipped, message: writeFailure(e) }
       }
     }
-    onProgress(++done, files.length)
+    progress(++done)
   }
   return { status: 'done', saved, skipped }
 }

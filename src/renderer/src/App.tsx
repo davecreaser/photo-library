@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Album,
   AlbumOffer,
+  BestOfSource,
   ClockSuggestion,
   ContentProgress,
   FaceProgress,
@@ -17,6 +18,10 @@ import type {
 import { DEFAULT_SIDEBAR_SECTIONS, type SidebarSections } from '../../shared/sidebarSections.ts'
 import { Sidebar } from './components/Sidebar.tsx'
 import { PhotoGrid } from './components/PhotoGrid.tsx'
+import { BestOfView } from './components/BestOfView.tsx'
+import { LookalikeGroup } from './components/LookalikeGroup.tsx'
+import { LeanDialog } from './components/LeanDialog.tsx'
+import { NOT_ENOUGH } from './bestOfCopy.ts'
 import { Viewer } from './components/Viewer.tsx'
 import { SelectionBar } from './components/SelectionBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
@@ -45,6 +50,7 @@ export type View =
   | { kind: 'album'; id: number }
   | { kind: 'tag'; id: number }
   | { kind: 'search'; text: string }
+  | { kind: 'bestOf'; source: BestOfSource }
 
 const api = window.api
 
@@ -84,6 +90,12 @@ export function App() {
   const [contentProgress, setContentProgress] = useState<ContentProgress | null>(null)
   const [renamingPerson, setRenamingPerson] = useState(false)
   const [confirmForgetPerson, setConfirmForgetPerson] = useState(false)
+  // Best of (spec 0006): why each photo is in the pick (for the viewer), and look-alike stacking in a grid.
+  const [bestOfReasons, setBestOfReasons] = useState<Record<number, string>>({})
+  const [stackLookalikes, setStackLookalikes] = useState(false)
+  const [lookalikeGroups, setLookalikeGroups] = useState<number[][]>([])
+  const [openGroup, setOpenGroup] = useState<number[] | null>(null)
+  const [showLean, setShowLean] = useState(false)
   // Bumped whenever the photo list for the current view may have changed.
   const [version, setVersion] = useState(0)
 
@@ -158,7 +170,29 @@ export function App() {
   }, [search])
 
   /** `keepNotice` keeps the suggestion notice (Undo / Open album) when returning to the list. */
+  /** The album or suggestion the current view shows (where Best of and look-alikes apply). */
+  const bestOfSource: BestOfSource | null =
+    view.kind === 'album' ? { kind: 'album', id: view.id } : view.kind === 'suggestion' ? { kind: 'suggestion', id: view.id } : null
+  const sourceCount =
+    view.kind === 'album' ? (albums.find((a) => a.id === view.id)?.photoCount ?? 0) : (suggested.find((e) => e.id === (view as { id: string }).id)?.count ?? 0)
+  const sourceKey = bestOfSource ? JSON.stringify(bestOfSource) : ''
+  useEffect(() => {
+    if (!stackLookalikes || !bestOfSource) {
+      setLookalikeGroups([])
+      return
+    }
+    let current = true
+    void api.getLookalikes(bestOfSource).then(
+      (g) => current && setLookalikeGroups(g),
+      () => {}
+    )
+    return () => {
+      current = false
+    }
+  }, [stackLookalikes, sourceKey, version])
+
   const navigate = (v: View, keepNotice = false) => {
+    setOpenGroup(null)
     if (v.kind !== 'search') setSearch('')
     setView(v)
     setSelected(new Set())
@@ -194,6 +228,8 @@ export function App() {
         return { tagId: view.id }
       case 'search':
         return { text: view.text }
+      case 'bestOf':
+        return {}
     }
   }, [view])
 
@@ -304,6 +340,8 @@ export function App() {
         return `#${tags.find((t) => t.id === view.id)?.name ?? 'tag'}`
       case 'search':
         return `“${view.text}”`
+      case 'bestOf':
+        return `Best of ${view.source.kind === 'album' ? (albums.find((a) => a.id === view.source.id)?.name ?? 'album') : (suggested.find((e) => e.id === view.source.id)?.name ?? 'suggestion')}`
     }
   })()
 
@@ -381,6 +419,7 @@ export function App() {
         onAlbumsChanged={refreshAll}
         onShowCorrections={() => setShowCorrections(true)}
         onShowIgnored={() => setShowIgnored(true)}
+        onShowBestOf={() => setShowLean(true)}
       />
 
       <main className="content">
@@ -514,6 +553,20 @@ export function App() {
               </button>
             </div>
           )}
+          {bestOfSource && selected.size === 0 && !namingSuggestion && (
+            <div className="header-actions">
+              <label className="toggle" title="Stacks photos that are nearly the same into one tile. Nothing in the album changes.">
+                <input type="checkbox" checked={stackLookalikes} onChange={(e) => setStackLookalikes(e.target.checked)} /> Show look-alikes together
+              </label>
+              <button
+                disabled={sourceCount < 6}
+                title={sourceCount < 6 ? NOT_ENOUGH : 'Choose the best photos of this'}
+                onClick={() => navigate({ kind: 'bestOf', source: bestOfSource }, true)}
+              >
+                Best of
+              </button>
+            </div>
+          )}
           {selected.size > 0 && (
             <SelectionBar
               selected={[...selected]}
@@ -584,8 +637,25 @@ export function App() {
               <button onClick={() => navigate({ kind: 'suggestions' })}>Back to Suggested albums</button>
             </div>
           </div>
+        ) : view.kind === 'bestOf' ? (
+          <BestOfView
+            source={view.source}
+            version={version}
+            onPhotosLoaded={(p, r) => {
+              setPhotos(p)
+              setBestOfReasons(r)
+            }}
+            onOpen={setViewerIndex}
+            onBack={() => navigate(view.source.kind === 'album' ? { kind: 'album', id: view.source.id } : { kind: 'suggestion', id: view.source.id }, true)}
+            onOpenAlbum={(id) => navigate({ kind: 'album', id })}
+            onMade={refreshAll}
+          />
+        ) : openGroup ? (
+          <LookalikeGroup ids={openGroup} onPhotosLoaded={setPhotos} onOpen={setViewerIndex} onBack={() => setOpenGroup(null)} />
         ) : (
           <PhotoGrid
+            stack={stackLookalikes && lookalikeGroups.length > 0 ? lookalikeGroups : null}
+            onOpenGroup={setOpenGroup}
             filter={filter}
             version={version}
             selected={selected}
@@ -605,12 +675,14 @@ export function App() {
           albums={albums}
           tags={tags}
           people={people}
+          reason={view.kind === 'bestOf' ? bestOfReasons[photos[viewerIndex].id] : undefined}
           onIndexChange={setViewerIndex}
           onClose={() => setViewerIndex(null)}
           onChanged={refreshAll}
         />
       )}
 
+      {showLean && <LeanDialog onClose={() => setShowLean(false)} />}
       {showCorrections && <CorrectionsDialog onClose={() => setShowCorrections(false)} onChanged={refreshAll} />}
       {showIgnored && <IgnoredFoldersDialog onClose={() => setShowIgnored(false)} onChanged={refreshAll} />}
       {showDismissed && (

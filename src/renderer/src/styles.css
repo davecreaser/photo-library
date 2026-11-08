@@ -1044,3 +1044,80 @@ button.primary-small {
   outline: 2px solid var(--accent, #4a8cff);
   outline-offset: -2px;
 }
+
+/* Best of (spec 0006) */
+.best-of-bar {
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.best-of-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.best-of-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.best-of-stepper input {
+  width: 56px;
+  text-align: center;
+}
+.focus-input {
+  min-width: 260px;
+}
+.notice-line {
+  margin: 0;
+}
+.tile-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0;
+  padding: 0 6px;
+}
+.tile:hover .tile-remove,
+.tile:focus-within .tile-remove {
+  opacity: 1;
+}
+.stack-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  padding: 0 7px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.swap-strip {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.swap-strip img {
+  height: 72px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.add-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed currentColor;
+  opacity: 0.7;
+  cursor: pointer;
+}
+.best-of-reason {
+  font-style: italic;
+  margin: 4px 0;
+}
+label.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

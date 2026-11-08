@@ -12,12 +12,14 @@ interface Props {
   albums: Album[]
   tags: Tag[]
   people: Person[]
+  /** Why this photo is in a Best of pick (spec 0006). */
+  reason?: string
   onIndexChange: (i: number) => void
   onClose: () => void
   onChanged: () => void
 }
 
-export function Viewer({ photos, index, albums, tags, people, onIndexChange, onClose, onChanged }: Props) {
+export function Viewer({ photos, index, albums, tags, people, reason, onIndexChange, onClose, onChanged }: Props) {
   const photo = photos[index]
   const [details, setDetails] = useState<PhotoDetails | null>(null)
   const [picking, setPicking] = useState(false)
@@ -91,6 +93,7 @@ export function Viewer({ photos, index, albums, tags, people, onIndexChange, onC
             {details?.favorite ? '★' : '☆'}
           </button>
         </div>
+        {reason && <p className="best-of-reason">{reason}</p>}
         {photo.dateSource === 'unknown' && <p className="hint">The photo has no date in it (e.g. a scan or a download).</p>}
         {photo.takenAtRaw && <p className="hint">Date corrected for the camera’s clock. The camera recorded {formatDateTime(photo.takenAtRaw)}.</p>}
         <dl>

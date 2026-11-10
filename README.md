@@ -46,7 +46,8 @@ Claude, or any MCP client, can search the library and make albums of its own (sp
      }
      ```
    - **Claude Code:** `claude mcp add --scope user photo-library --env 'PHOTO_LIBRARY_SOCKET=…' --env 'PHOTO_LIBRARY_TOKEN=…' -- node '<repo>/out/main/relay.js'`
-3. Keep Photo Library open while the assistant works. Needs Node.js 22.18 or later. Turning the switch off, or **Forget connected assistants**, cuts assistants off at once.
+3. Ask for the best photos of an album or a year: the assistant uses the app's Best of (it can see sharpness and look-alikes; the assistant can't) and opens its pick in Photo Library for you to adjust and keep with **Make album** (spec 0009). Nothing is kept until you do.
+4. Keep Photo Library open while the assistant works. Needs Node.js 22.18 or later. Turning the switch off, or **Forget connected assistants**, cuts assistants off at once.
 
 ## Where data lives
 

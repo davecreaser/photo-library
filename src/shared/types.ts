@@ -299,6 +299,10 @@ export interface Api {
   onAlbumsChanged(cb: () => void): () => void
   /** Puts text on the clipboard; false if that failed. */
   copyText(text: string): Promise<boolean>
+  /** An assistant proposed a pick for the owner to review (spec 0009). */
+  onProposal(cb: (p: ProposalShow) => void): () => void
+  /** Tells the main process what the owner did with a proposal. */
+  reportProposal(id: number, event: ProposalEvent): void
   /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */
   getSidebarSections(): Promise<SidebarSections>
   setSidebarSections(s: SidebarSections): Promise<void>
@@ -424,3 +428,19 @@ export interface BestOfView {
   /** Focus words were given but the content model isn't ready. */
   focusUnavailable: boolean
 }
+
+/** A proposal from an AI assistant, opened in the Best of screen (spec 0009). Lives in memory only. */
+export interface ProposalShow {
+  proposalId: number
+  albumId: number
+  /** The album's name, for the incoming-pick prompt. */
+  name: string
+  photoIds: number[]
+}
+
+/** What the owner did with a proposal, as the window reports it (spec 0009, AC-9). */
+export type ProposalEvent =
+  | { kind: 'edited'; edited: boolean }
+  | { kind: 'approved'; albumId: number; name: string; photoIds: number[] }
+  | { kind: 'closed' }
+  | { kind: 'replaced'; by: number }

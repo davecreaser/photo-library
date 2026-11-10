@@ -4,6 +4,7 @@ import type {
   AlbumOffer,
   AssistantStatus,
   BestOfSource,
+  ProposalShow,
   ClockSuggestion,
   ContentProgress,
   FaceProgress,
@@ -23,7 +24,7 @@ import { BestOfView } from './components/BestOfView.tsx'
 import { LookalikeGroup } from './components/LookalikeGroup.tsx'
 import { LeanDialog } from './components/LeanDialog.tsx'
 import { AssistantDialog, ASSISTANT_ALBUM_HINT } from './components/AssistantDialog.tsx'
-import { NOT_ENOUGH } from './bestOfCopy.ts'
+import { NOT_ENOUGH, PROPOSAL_ACCESS_OFF, PROPOSAL_MADE, PROPOSAL_WAITING } from './bestOfCopy.ts'
 import { Viewer } from './components/Viewer.tsx'
 import { ExportDialog } from './components/ExportDialog.tsx'
 import { SelectionBar } from './components/SelectionBar.tsx'
@@ -53,7 +54,7 @@ export type View =
   | { kind: 'album'; id: number }
   | { kind: 'tag'; id: number }
   | { kind: 'search'; text: string }
-  | { kind: 'bestOf'; source: BestOfSource }
+  | { kind: 'bestOf'; source: BestOfSource; proposal?: ProposalShow }
 
 const api = window.api
 
@@ -107,6 +108,11 @@ export function App() {
   const [openGroup, setOpenGroup] = useState<number[] | null>(null)
   const [showLean, setShowLean] = useState(false)
   const [showAssistant, setShowAssistant] = useState(false)
+  // A proposal from an AI assistant (spec 0009): what the Best of screen reports, and one waiting behind the owner's edits.
+  const [bestOfState, setBestOfState] = useState({ edited: false, made: false })
+  const [incoming, setIncoming] = useState<ProposalShow | null>(null)
+  const [proposalArrivedOver, setProposalArrivedOver] = useState(false)
+  const [proposalArrivals, setProposalArrivals] = useState(0)
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | null>(null)
   // Bumped whenever the photo list for the current view may have changed.
   const [version, setVersion] = useState(0)
@@ -172,6 +178,84 @@ export function App() {
       offAssistant()
     }
   }, [refreshSidebar, refreshAll])
+
+  // A proposal opens the Best of screen with the assistant's pick (spec 0009, AC-7), unless the owner
+  // has unsaved Best of edits: then they are asked first, and Stay closes the new proposal.
+  const live = useRef({ view, bestOfState, incoming })
+  live.current = { view, bestOfState, incoming }
+  const openProposal = useCallback((p: ProposalShow) => {
+    const { view: current } = live.current
+    const over = current.kind === 'bestOf'
+    if (current.kind === 'bestOf' && current.proposal) api.reportProposal(current.proposal.proposalId, { kind: 'replaced', by: p.proposalId })
+    setIncoming(null)
+    setViewerIndex(null)
+    setOpenGroup(null)
+    setSearch('')
+    setSelected(new Set())
+    setNotice(null)
+    setBestOfState({ edited: false, made: false })
+    setProposalExpired(false)
+    const next: View = { kind: 'bestOf', source: { kind: 'album', id: p.albumId }, proposal: p }
+    setView(next)
+    setProposalArrivedOver(over)
+    // Proposals can arrive faster than React renders: the next one must see this one on screen.
+    live.current = { ...live.current, view: next, incoming: null, bestOfState: { edited: false, made: false } }
+  }, [])
+  useEffect(
+    () =>
+      api.onProposal((p) => {
+        setViewerIndex(null)
+        setShowLean(false)
+        setShowAssistant(false)
+        setShowCorrections(false)
+        setShowIgnored(false)
+        setShowDismissed(false)
+        setProposalArrivals((n) => n + 1)
+        const { view: current, bestOfState: state, incoming: waiting } = live.current
+        if (current.kind === 'bestOf' && state.edited && !state.made) {
+          if (waiting) api.reportProposal(waiting.proposalId, { kind: 'replaced', by: p.proposalId })
+          setIncoming(p)
+          live.current = { ...live.current, incoming: p }
+        } else openProposal(p)
+      }),
+    [openProposal]
+  )
+  const stayForIncoming = () => {
+    if (incoming) api.reportProposal(incoming.proposalId, { kind: 'closed' })
+    setIncoming(null)
+  }
+  // With access off no proposal can arrive, and one waiting behind the owner's edits is gone; the one
+  // on screen has expired, even if access comes back on.
+  const [proposalExpired, setProposalExpired] = useState(false)
+  useEffect(() => {
+    if (assistantStatus && assistantStatus.state !== 'on') {
+      setIncoming(null)
+      setProposalExpired(true)
+    }
+  }, [assistantStatus])
+  // Leaving the Best of screen any other way than the prompt closes a proposal waiting behind it.
+  useEffect(() => {
+    if (view.kind !== 'bestOf' && incoming) {
+      api.reportProposal(incoming.proposalId, { kind: 'closed' })
+      setIncoming(null)
+    }
+  }, [view, incoming])
+  // The source album was deleted while its Best of shows: leave it, which closes a proposal (AC-9).
+  // Only once the album was seen: a proposal can arrive before the sidebar lists a new album.
+  const sourceSeen = useRef<number | null>(null)
+  const bestOfAlbumId = view.kind === 'bestOf' && view.source.kind === 'album' ? view.source.id : null
+  useEffect(() => {
+    if (bestOfAlbumId === null) {
+      sourceSeen.current = null
+      return
+    }
+    const listed = albums.some((a) => a.id === bestOfAlbumId)
+    if (listed) sourceSeen.current = bestOfAlbumId
+    else if (sourceSeen.current === bestOfAlbumId) {
+      sourceSeen.current = null
+      setView({ kind: 'all' })
+    }
+  }, [albums, bestOfAlbumId])
 
   // An assistant made or changed an album (spec 0008, AC-13): the sidebar shows it, and an open album refreshes in place.
   const viewIsAlbum = view.kind === 'album'
@@ -478,6 +562,9 @@ export function App() {
             {currentSuggestion && <div className="subtitle">{suggestionMeta(currentSuggestion)}</div>}
             {currentOffer && <div className="subtitle">{offerMeta(currentOffer)}</div>}
             {view.kind === 'album' && albums.find((a) => a.id === view.id)?.madeByAssistant && <div className="subtitle">{ASSISTANT_ALBUM_HINT}</div>}
+            {view.kind === 'bestOf' && view.proposal && (
+              <div className="subtitle">{proposalExpired ? PROPOSAL_ACCESS_OFF : bestOfState.made ? PROPOSAL_MADE : PROPOSAL_WAITING}</div>
+            )}
           </div>
           {currentPerson &&
             view.kind === 'person' &&
@@ -524,7 +611,9 @@ export function App() {
               </button>
             </div>
           )}
-          {exportingAlbum !== null && <ExportDialog source={{ albumId: exportingAlbum }} onClose={() => setExportingAlbum(null)} />}
+          {exportingAlbum !== null && (
+            <ExportDialog source={{ albumId: exportingAlbum }} onClose={() => setExportingAlbum(null)} closeIfIdle={proposalArrivals} />
+          )}
           {currentSuggestion && selected.size === 0 && (
             <div className="header-actions">
               {namingSuggestion ? (
@@ -682,7 +771,14 @@ export function App() {
           </div>
         ) : view.kind === 'bestOf' ? (
           <BestOfView
+            key={view.proposal ? `p${view.proposal.proposalId}` : 'auto'}
             source={view.source}
+            proposal={view.proposal}
+            arrivedOver={proposalArrivedOver}
+            incoming={incoming && assistantStatus?.state === 'on' ? incoming : null}
+            onIncomingLeave={() => incoming && openProposal(incoming)}
+            onIncomingStay={stayForIncoming}
+            onStateChange={setBestOfState}
             version={version}
             onPhotosLoaded={(p, r) => {
               setPhotos(p)

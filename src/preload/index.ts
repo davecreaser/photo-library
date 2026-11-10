@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, AssistantStatus, ContentProgress, ExportProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
+import type { Api, AssistantStatus, ContentProgress, ExportProgress, FaceProgress, ProposalShow, ScanProgress } from '../shared/types.ts'
+
+// A proposal can reach a new window before React has subscribed (spec 0009): keep it until then.
+let proposalListener: ((p: ProposalShow) => void) | null = null
+const earlyProposals: ProposalShow[] = []
+ipcRenderer.on('proposal:show', (_e, p: ProposalShow) => (proposalListener ? proposalListener(p) : earlyProposals.push(p)))
 
 const api: Api = {
   getBestOf: (r) => ipcRenderer.invoke('bestOf:get', r),
@@ -36,6 +41,14 @@ const api: Api = {
     return () => ipcRenderer.removeListener('albums:changed', listener)
   },
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
+  onProposal: (cb) => {
+    proposalListener = cb
+    for (const p of earlyProposals.splice(0)) cb(p)
+    return () => {
+      if (proposalListener === cb) proposalListener = null
+    }
+  },
+  reportProposal: (id, event) => ipcRenderer.send('proposal:report', id, event),
   getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),
   setSidebarSections: (s) => ipcRenderer.invoke('sidebar:set', s),
   getLibrary: () => ipcRenderer.invoke('library:get'),

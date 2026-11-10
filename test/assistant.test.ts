@@ -2,194 +2,17 @@
 // socket, and the relay, run as the assistant would run it. Generated data only.
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, statSync, existsSync, readFileSync } from 'node:fs'
-import { connect, type Socket } from 'node:net'
+import { mkdtempSync, rmSync, statSync, existsSync } from 'node:fs'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installFsGuard } from '../src/main/fsGuard.ts'
-import { LibraryDb, type FileMeta } from '../src/main/db.ts'
+import { LibraryDb } from '../src/main/db.ts'
 import { PhotoSearch } from '../src/main/photoSearch.ts'
 import { AssistantTools, TOOL_DEFINITIONS } from '../src/main/assistantTools.ts'
 import { AssistantAccess, REASONS, SETTING, setupSnippets, socketAddress } from '../src/main/assistantAccess.ts'
 import { HANDSHAKE_MS, SETUP_OUT_OF_DATE, TURNED_OFF } from '../src/main/assistantServer.ts'
-import type { AssistantStatus, ContentProgress } from '../src/shared/types.ts'
-
-installFsGuard({ allowedRoots: () => [tmpdir()], protectedRoots: () => [] })
-
-const posix = process.platform !== 'win32'
-const RELAY = join(import.meta.dirname, '..', 'src', 'relay', 'relay.ts')
-const cleanups: (() => void)[] = []
-after(() => cleanups.forEach((f) => f()))
-
-const S = {
-  base: 'SENTINELBASE',
-  folder: 'SENTINELFOLDER',
-  file: 'SENTINELFILE',
-  camera: 'SENTINELCAMERA',
-  hash: 'SENTINELHASH'
-}
-
-interface Lib {
-  dir: string
-  db: LibraryDb
-  access: AssistantAccess
-  statuses: AssistantStatus[]
-  albumsChanged: number
-  progress: ContentProgress
-  add: (n: number, o?: { folder?: string; first?: string | null; people?: string[] }) => number[]
-  close: () => Promise<void>
-}
-
-async function setup(o: { on?: boolean } = { on: true }): Promise<Lib> {
-  const dir = mkdtempSync(join(tmpdir(), 'pl-asst-'))
-  const db = new LibraryDb(join(dir, 'library.db'))
-  const base = `/${S.base}`
-  db.setSetting('basePath', base)
-  let n = 0
-  const lib: Lib = {
-    dir,
-    db,
-    statuses: [],
-    albumsChanged: 0,
-    progress: { phase: 'idle', done: 0, total: 0, upgrading: false, secondsLeft: null, packaged: false },
-    access: null as never,
-    add(count, opt = {}) {
-      const ids: number[] = []
-      for (let i = 0; i < count; i++) {
-        n++
-        const first = opt.first === undefined ? '2024-07-01T09:00:00' : opt.first
-        const meta: FileMeta = {
-          path: `${base}/${opt.folder ?? S.folder}/${S.file}_${n}.jpg`,
-          size: 1,
-          mtimeMs: 1,
-          takenAt: first ? new Date(new Date(first + 'Z').getTime() + i * 86_400_000).toISOString().slice(0, 19) : null,
-          width: 4000,
-          height: 3000,
-          orientation: 1,
-          camera: S.camera,
-          lat: 59.91,
-          lon: 10.75
-        }
-        db.recordFile(meta, `${S.hash}${n}`, 1)
-        const id = db.queryPhotos({ text: `${S.file}_${n}.jpg` }).photos[0].id
-        const who = opt.people ?? []
-        const faces = db.saveFaces(
-          id,
-          who.map((_, k) => ({ x: 0.1 * k, y: 0.1, w: 0.1, h: 0.1, score: 0.9, embedding: null })),
-          1
-        )
-        who.forEach((name, k) => db.confirmFaces([faces[k]], db.personNamed(name)))
-        ids.push(id)
-      }
-      return ids
-    },
-    async close() {
-      await lib.access.shutdown()
-      db.close()
-      rmSync(dir, { recursive: true, force: true })
-    }
-  }
-  lib.access = new AssistantAccess({
-    dataDir: dir,
-    db,
-    relayPath: RELAY,
-    version: '0.0.0-test',
-    makeTools: () =>
-      new AssistantTools({
-        db,
-        search: new PhotoSearch(db, async () => null),
-        contentProgress: () => lib.progress,
-        albumsChanged: () => lib.albumsChanged++
-      }),
-    onChange: (s) => lib.statuses.push(s)
-  })
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  if (o.on) assert.equal((await lib.access.turnOn()).state, 'on')
-  return lib
-}
-
-const token = (lib: Lib) => readFileSync(join(lib.dir, 'assistant', 'token'), 'utf8')
-
-/** A line-based client over the socket: the handshake, then JSON-RPC. Everything received is kept in `raw`. */
-class Client {
-  socket: Socket
-  raw = ''
-  private lines: string[] = []
-  private waiters: ((l: string) => void)[] = []
-  private nextId = 1
-  closed: Promise<void>
-
-  constructor(address: string) {
-    this.socket = connect(address)
-    this.socket.setEncoding('utf8')
-    let buf = ''
-    this.socket.on('data', (c: string) => {
-      this.raw += c
-      buf += c
-      let at
-      while ((at = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, at)
-        buf = buf.slice(at + 1)
-        const w = this.waiters.shift()
-        if (w) w(line)
-        else this.lines.push(line)
-      }
-    })
-    this.socket.on('error', () => {})
-    this.closed = new Promise((r) => this.socket.on('close', () => r()))
-  }
-
-  next(ms = 3000): Promise<unknown> {
-    const l = this.lines.shift()
-    if (l !== undefined) return Promise.resolve(JSON.parse(l))
-    return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('no answer')), ms)
-      this.waiters.push((line) => {
-        clearTimeout(t)
-        resolve(JSON.parse(line))
-      })
-    })
-  }
-
-  send(m: unknown): void {
-    this.socket.write(JSON.stringify(m) + '\n')
-  }
-
-  async hello(tok: string): Promise<unknown> {
-    this.send({ token: tok })
-    return this.next()
-  }
-
-  async rpc(method: string, params?: unknown): Promise<{ result?: any; error?: { message: string } }> {
-    const id = this.nextId++
-    this.send({ jsonrpc: '2.0', id, method, params })
-    const m = (await this.next()) as { id: number; result?: unknown; error?: { message: string } }
-    assert.equal(m.id, id)
-    return m as never
-  }
-
-  /** Calls a tool; returns the parsed result, or { error } for a tool error. */
-  async tool(name: string, args: Record<string, unknown> = {}): Promise<any> {
-    const r = await this.rpc('tools/call', { name, arguments: args })
-    if (r.error) throw new Error(r.error.message)
-    const text = r.result.content[0].text as string
-    return r.result.isError ? { error: text } : JSON.parse(text)
-  }
-
-  end(): void {
-    this.socket.end()
-  }
-}
-
-async function client(lib: Lib): Promise<Client> {
-  const c = new Client(lib.access.address)
-  assert.deepEqual(await c.hello(token(lib)), { ok: true })
-  await c.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } })
-  c.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
-  return c
-}
+import { cleanups, posix, RELAY, S, setup, token, Client, client, type Lib } from './assistant-helpers.ts'
 
 // --- AC-1, AC-4, AC-5, AC-6: the switch, the socket and the token ---
 
@@ -321,7 +144,14 @@ test('AC-7: turning off closes connections within 1 s, answers calls in flight, 
   let release!: () => void
   const slow = new Promise<null>((r) => (release = () => r(null)))
   ;(lib.access as unknown as { o: { makeTools: () => AssistantTools } }).o.makeTools = () =>
-    new AssistantTools({ db: lib.db, search: new PhotoSearch(lib.db, () => slow), contentProgress: () => lib.progress, albumsChanged: () => {} })
+    new AssistantTools({
+      db: lib.db,
+      search: new PhotoSearch(lib.db, () => slow),
+      contentProgress: () => lib.progress,
+      albumsChanged: () => {},
+      bestOf: lib.bestOf,
+      proposals: lib.proposals
+    })
   await lib.access.turnOff()
   await lib.access.turnOn() // the server takes the tools maker when it starts
   const c2 = await client(lib)
@@ -440,7 +270,7 @@ test('AC-3: through the relay, an assistant initialises, lists tools and calls o
   assert.equal(init.result.serverInfo.name, 'photo-library')
   assert.equal(init.result.protocolVersion, '2025-06-18')
   const tools = await r.rpc({ id: 2, method: 'tools/list' })
-  assert.equal(tools.result.tools.length, 5)
+  assert.equal(tools.result.tools.length, TOOL_DEFINITIONS.length)
   const o = await r.rpc({ id: 3, method: 'tools/call', params: { name: 'library_overview', arguments: {} } })
   assert.equal(JSON.parse(o.result.content[0].text).photos, 3)
   assert.ok(!r.out().includes(envOf(lib).PHOTO_LIBRARY_TOKEN), 'the token is never echoed')
@@ -474,7 +304,7 @@ test('AC-3: when the app is unreachable the relay answers within 2 s, stays up, 
   assert.ok(off.error)
   await lib.access.turnOn()
   const back = await r.rpc({ id: 5, method: 'tools/list' })
-  assert.equal(back.result.tools.length, 5)
+  assert.equal(back.result.tools.length, TOOL_DEFINITIONS.length)
   r.proc.kill()
   await lib.close()
 })
@@ -495,13 +325,13 @@ test('AC-3, AC-5: a relay with an out-of-date or missing token reports it', asyn
 
 // --- AC-8: the tools ---
 
-test('AC-8: exactly five tools, each described for a model with an example; unknown tools and methods get plain errors', async () => {
+test('AC-8 (now spec 0009 AC-1): exactly eight tools, each described for a model with an example; unknown tools and methods get plain errors', async () => {
   const lib = await setup()
   const c = await client(lib)
   const { result } = await c.rpc('tools/list')
   assert.deepEqual(
     result.tools.map((t: { name: string }) => t.name),
-    ['library_overview', 'search_photos', 'create_album', 'add_to_album', 'remove_from_album']
+    ['library_overview', 'search_photos', 'create_album', 'add_to_album', 'remove_from_album', 'best_of', 'propose_selection', 'proposal_status']
   )
   for (const t of result.tools) {
     assert.match(t.description, /Example: \w+\(/, t.name)

@@ -21,9 +21,12 @@ import createContentWorker from './contentWorker.ts?nodeWorker'
 import { BestOfService } from './bestOfService.ts'
 import { AssistantAccess } from './assistantAccess.ts'
 import { AssistantTools } from './assistantTools.ts'
+import { Proposals } from './proposals.ts'
 import type {
   BestOfRequest,
   BestOfSource,
+  ProposalEvent,
+  ProposalShow,
   ClockCorrection,
   ExportOptions,
   ExportResult,
@@ -45,6 +48,7 @@ let analysis: Analysis
 let search: PhotoSearch
 let bestOfService: BestOfService
 let assistant: AssistantAccess
+let proposals: Proposals
 let window: BrowserWindow | null = null
 let currentScan: Promise<void> | null = null
 let scanAgain = false
@@ -202,11 +206,40 @@ function createWindow(): void {
       sandbox: true
     }
   })
-  window.on('closed', () => (window = null))
+  window.on('closed', () => {
+    window = null
+    proposals?.closeAll()
+  })
   if (process.env.ELECTRON_RENDERER_URL) {
     window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     window.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+
+/**
+ * Opens an assistant's proposal in the window (spec 0009, AC-7): opened if none is open, restored,
+ * shown and focused; where the system refuses focus, the taskbar or dock asks for attention.
+ */
+function stopFlashing(): void {
+  window?.flashFrame(false)
+}
+
+function showProposal(p: ProposalShow): void {
+  if (!window) createWindow()
+  const win = window!
+  const send = () => win.webContents.send('proposal:show', p)
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+  else send()
+  if (win.isMinimized()) win.restore()
+  win.show()
+  if (process.platform === 'darwin') app.focus({ steal: true })
+  win.focus()
+  if (!win.isFocused()) {
+    win.flashFrame(true)
+    win.removeListener('focus', stopFlashing)
+    win.once('focus', stopFlashing)
+    if (process.platform === 'darwin') app.dock?.bounce('informational')
   }
 }
 
@@ -308,6 +341,7 @@ function registerIpc(): void {
   ipcMain.handle('assistant:get', () => assistant.status())
   ipcMain.handle('assistant:set', (_e, on: boolean) => (on ? assistant.turnOn() : assistant.turnOff()))
   ipcMain.handle('assistant:forget', () => assistant.forget())
+  ipcMain.on('proposal:report', (_e, id: number, event: ProposalEvent) => proposals.report(id, event))
   ipcMain.handle('clipboard:write', (_e, text: string) => {
     try {
       clipboard.writeText(String(text))
@@ -464,6 +498,7 @@ app.whenReady().then(() => {
     (e) => analysis.unavailable(e)
   )
   bestOfService = new BestOfService(db, organiser, search)
+  proposals = new Proposals(showProposal)
   assistant = new AssistantAccess({
     dataDir,
     db,
@@ -480,9 +515,12 @@ app.whenReady().then(() => {
           (e) => analysis.unavailable(e)
         ),
         contentProgress: () => analysis.contentProgress(),
-        albumsChanged: () => window?.webContents.send('albums:changed')
+        albumsChanged: () => window?.webContents.send('albums:changed'),
+        bestOf: bestOfService,
+        proposals
       }),
-    onChange: (s) => window?.webContents.send('assistant:status', s)
+    onChange: (s) => window?.webContents.send('assistant:status', s),
+    onEnded: () => proposals.expireAll()
   })
   loadProtectedRoots()
   registerPhotoProtocol()

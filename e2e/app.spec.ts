@@ -1413,7 +1413,7 @@ function assistantFrom(desktopJson: string) {
   return { proc, rpc, tool, out: () => out }
 }
 
-test('assistant access (spec 0008): off by default; the shown setup connects; all five tools; live AI album; turning off cuts it', async () => {
+test('assistant access (spec 0008): off by default; the shown setup connects; all its tools; live AI album; turning off cuts it', async () => {
   await chooseLibrary()
   const link = page.locator('.sidebar-footer').getByRole('button', { name: 'Assistant access…' })
   await expect(link).toBeVisible()
@@ -1436,7 +1436,7 @@ test('assistant access (spec 0008): off by default; the shown setup connects; al
     expect(
       (await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })).result.serverInfo.name
     ).toBe('photo-library')
-    expect((await a.rpc('tools/list')).result.tools).toHaveLength(5)
+    expect((await a.rpc('tools/list')).result.tools).toHaveLength(8)
     const overview = await a.tool('library_overview')
     expect(overview.photos).toBe(lib.uniquePhotos)
     const all = await a.tool('search_photos', { limit: 200 })
@@ -1482,6 +1482,212 @@ test('assistant access (spec 0008): off by default; the shown setup connects; al
     } finally {
       rmSync(other, { recursive: true, force: true })
     }
+  } finally {
+    a.proc.kill()
+  }
+})
+
+test('assistant best of (spec 0009, AC-7, AC-8, AC-10, AC-12): a year to an AI album, best_of, a proposal the owner adjusts and approves; Back closes the next', async () => {
+  test.setTimeout(240_000)
+  await withTrip('Sintra', async ({ hasVectors }) => {
+    test.skip(!hasVectors, 'content model unavailable: swapping needs look-alike groups')
+    const status = await page.evaluate(() => window.api.setAssistantAccess(true))
+    expect(status.state).toBe('on')
+    const a = assistantFrom(status.desktopJson!)
+    try {
+      await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
+      expect((await a.rpc('tools/list')).result.tools).toHaveLength(8)
+      expect((await a.tool('library_overview')).photos).toBeGreaterThan(0)
+      const year = await a.tool('search_photos', { from: '2026-01-01', to: '2026-12-31', limit: 200 })
+      const made = await a.tool('create_album', { name: '2026 by Claude', photo_ids: year.photos.map((p: { id: number }) => p.id) })
+      const best = await a.tool('best_of', { album_id: made.album_id, count: 12 })
+      expect(best.photos).toHaveLength(12)
+      const pick: number[] = best.photos.map((p: { id: number }) => p.id)
+      const proposal = await a.tool('propose_selection', { album_id: made.album_id, photo_ids: pick })
+      expect(proposal.status).toBe('waiting')
+
+      // The window shows exactly the assistant's pick, said to be a proposal.
+      await expect(page.getByRole('heading', { name: 'Best of 2026 by Claude' })).toBeVisible({ timeout: 2000 })
+      await expect(page.locator('.content-header .subtitle')).toContainText('Picked by your AI assistant for you to look over')
+      await expect(tileCount()).toHaveCount(12)
+      const shown = () => tileCount().evaluateAll((els) => els.map((e) => Number(e.querySelector('img')!.getAttribute('src')!.split('/').pop())))
+      expect([...(await shown())].sort((x, y) => x - y)).toEqual([...pick].sort((x, y) => x - y))
+      await expect(tileCount().first()).toHaveAttribute('title', 'Picked by your AI assistant')
+      expect(await page.getByLabel('How many photos').inputValue()).toBe('12')
+      await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0)
+
+      // The owner swaps one from its look-alikes and removes another, then makes the album.
+      const stacked = tileCount()
+        .filter({ has: page.locator('.stack-badge') })
+        .first()
+      const swappedOut = Number((await stacked.locator('img').getAttribute('src'))!.split('/').pop())
+      await stacked.locator('.stack-badge').click()
+      const choice = page.locator('.swap-strip img').first()
+      const swappedIn = Number((await choice.getAttribute('src'))!.split('/').pop())
+      await choice.click()
+      await expect.poll(shown, { timeout: 10_000 }).toContain(swappedIn)
+      await expect(tileCount().filter({ has: page.locator(`img[src$="/${swappedIn}"]`) })).toHaveAttribute('title', 'You chose this one')
+      const removed = (await shown()).find((id) => id !== swappedIn)!
+      await tileCount()
+        .filter({ has: page.locator(`img[src$="/${removed}"]`) })
+        .getByRole('button', { name: 'Remove from this pick' })
+        .click()
+      await expect(tileCount()).toHaveCount(11)
+      await expect(page.getByRole('button', { name: 'Reset' })).toBeVisible()
+      expect((await a.tool('proposal_status', { proposal_id: proposal.proposal_id })).edited).toBe(true)
+      await page.getByRole('button', { name: 'Make album' }).click()
+      await expect(page.locator('.notice-line')).toContainText('Made the album “Best of 2026 by Claude” with 11 photos.')
+      await expect(page.locator('.content-header .subtitle')).toContainText("The album is yours; the assistant can't change it.")
+      const approved = await a.tool('proposal_status', { proposal_id: proposal.proposal_id })
+      expect(approved).toMatchObject({ status: 'approved', name: 'Best of 2026 by Claude', photos: 11, kept: 10, added: [swappedIn] })
+      expect([...approved.removed].sort()).toEqual([removed, swappedOut].sort())
+      expect((await a.tool('add_to_album', { album_id: approved.album_id, photo_ids: [pick[0]] })).error).toMatch(/owner's/)
+
+      // A second proposal, which the owner leaves with Back: closed, and no album made.
+      const albumsBefore = (await page.evaluate(() => window.api.listAlbums())).length
+      const second = await a.tool('propose_selection', { album_id: made.album_id, photo_ids: pick })
+      await expect(page.locator('.notice-line')).toContainText('Your AI assistant sent a new pick.', { timeout: 2000 })
+      expect((await a.tool('proposal_status', { proposal_id: proposal.proposal_id })).status).toBe('approved')
+      await page.getByRole('button', { name: 'Back to 2026 by Claude' }).click()
+      await expect.poll(async () => (await a.tool('proposal_status', { proposal_id: second.proposal_id })).status).toBe('closed')
+      expect((await page.evaluate(() => window.api.listAlbums())).length).toBe(albumsBefore)
+      expect((await a.tool('remove_from_album', { album_id: made.album_id, photo_ids: [pick[0]] })).removed).toBe(1)
+      for (const leak of ['sintra_week', '.JPG', 'S0_', 'One0']) expect(a.out()).not.toContain(leak)
+    } finally {
+      a.proc.kill()
+    }
+  })
+})
+
+test('assistant best of (spec 0009, AC-7, AC-9, AC-11): a new pick over edits asks first; Stay closes it, Leave replaces; access off keeps the screen', async () => {
+  await chooseLibrary()
+  const status = await page.evaluate(() => window.api.setAssistantAccess(true))
+  const a = assistantFrom(status.desktopJson!)
+  try {
+    await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
+    const all = (await a.tool('search_photos', { limit: 200 })).photos.map((p: { id: number }) => p.id)
+    const album = await a.tool('create_album', { name: 'Iceland', photo_ids: all })
+    const propose = async () => (await a.tool('propose_selection', { album_id: album.album_id, photo_ids: all.slice(0, 7) })).proposal_id as number
+    const state = async (id: number) => (await a.tool('proposal_status', { proposal_id: id })).status
+    const first = await propose()
+    await expect(tileCount()).toHaveCount(7, { timeout: 2000 })
+    await tileCount().first().getByRole('button', { name: 'Remove from this pick' }).click()
+    await expect(tileCount()).toHaveCount(6)
+
+    const second = await propose()
+    const prompt = page.locator('.notice-line', { hasText: 'Your AI assistant sent a new pick of “Iceland”. Leave without making an album?' })
+    await expect(prompt).toBeVisible({ timeout: 2000 })
+    await expect(tileCount()).toHaveCount(6) // the owner's screen is untouched
+    await prompt.getByRole('button', { name: 'Stay' }).click()
+    await expect(prompt).toHaveCount(0)
+    expect(await state(second)).toBe('closed')
+    expect(await state(first)).toBe('waiting')
+
+    const third = await propose()
+    await expect(prompt).toBeVisible({ timeout: 2000 })
+    await prompt.getByRole('button', { name: 'Leave' }).click()
+    await expect(tileCount()).toHaveCount(7)
+    expect(await a.tool('proposal_status', { proposal_id: first })).toMatchObject({ status: 'replaced', by_proposal_id: third })
+
+    // Access off: the screen stays, now an ordinary Best of; the proposal has expired.
+    await tileCount().first().getByRole('button', { name: 'Remove from this pick' }).click()
+    await page.evaluate(() => window.api.setAssistantAccess(false))
+    await expect(page.locator('.content-header .subtitle')).toContainText("Assistant access is off, so your assistant won't hear what you decide.")
+    await expect(tileCount()).toHaveCount(6)
+    await expect(page.getByRole('button', { name: 'Make album' })).toBeEnabled()
+    const again = await page.evaluate(() => window.api.setAssistantAccess(true))
+    const b = assistantFrom(again.desktopJson!)
+    try {
+      await b.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
+      expect((await b.tool('proposal_status', { proposal_id: third })).status).toBe('expired')
+      // Deleting the source album while a proposal shows leaves the screen and closes the proposal (AC-9).
+      const fourth = (await b.tool('propose_selection', { album_id: album.album_id, photo_ids: all.slice(0, 7) })).proposal_id
+      await expect(prompt).toBeVisible({ timeout: 2000 }) // the screen still has the owner's edit
+      const row = albumItem('Iceland')
+      await row.hover()
+      await row.getByTitle('Delete album').click()
+      await page.locator('.sidebar .confirm').getByRole('button', { name: 'Delete' }).click()
+      await expect(page.getByRole('heading', { name: 'Best of Iceland' })).toHaveCount(0)
+      await expect(prompt).toHaveCount(0)
+      expect((await b.tool('proposal_status', { proposal_id: fourth })).status).toBe('closed')
+    } finally {
+      b.proc.kill()
+    }
+  } finally {
+    a.proc.kill()
+  }
+})
+
+test('assistant best of (QA, AC-7, AC-8): a proposal restores a minimised window; − stops at the pick; Reset returns to the proposal', async () => {
+  await chooseLibrary()
+  const status = await page.evaluate(() => window.api.setAssistantAccess(true))
+  const a = assistantFrom(status.desktopJson!)
+  try {
+    await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
+    const all: number[] = (await a.tool('search_photos', { limit: 200 })).photos.map((p: { id: number }) => p.id)
+    const album = await a.tool('create_album', { name: 'Faroe', photo_ids: all })
+    const windowState = () =>
+      app.evaluate(({ BrowserWindow }) => {
+        const w = BrowserWindow.getAllWindows()[0]
+        return { minimized: w.isMinimized(), visible: w.isVisible() }
+      })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize())
+    // A display with no window manager (CI's Linux) can't minimise: there, only the showing is checked.
+    let canMinimise = true
+    await expect
+      .poll(async () => (await windowState()).minimized, { timeout: 3000 })
+      .toBe(true)
+      .catch(() => (canMinimise = false))
+
+    const pick = all.slice(0, 7)
+    const id = (await a.tool('propose_selection', { album_id: album.album_id, photo_ids: pick })).proposal_id
+    if (canMinimise) await expect.poll(windowState, { timeout: 2000 }).toEqual({ minimized: false, visible: true })
+    else expect((await windowState()).visible).toBe(true)
+    await expect(tileCount()).toHaveCount(7, { timeout: 2000 })
+    const shown = async () =>
+      (await tileCount().evaluateAll((els) => els.map((e) => Number(e.querySelector('img')!.getAttribute('src')!.split('/').pop())))).sort((x, y) => x - y)
+    expect(await shown()).toEqual([...pick].sort((x, y) => x - y))
+
+    // − can't drop the assistant's picks; + adds the engine's own.
+    const fewer = page.getByRole('button', { name: 'Fewer photos' })
+    await expect(fewer).toBeDisabled()
+    await expect(fewer).toHaveAttribute('title', 'To show fewer, remove photos with ✕')
+    await page.getByRole('button', { name: 'More photos' }).click()
+    await expect(tileCount()).toHaveCount(8)
+    for (const p of pick) await expect(tileCount().filter({ has: page.locator(`img[src$="/${p}"]`) })).toHaveCount(1)
+    await expect.poll(async () => (await a.tool('proposal_status', { proposal_id: id })).edited).toBe(true)
+
+    // Reset goes back to the assistant's pick, not the automatic one, and it is unedited again.
+    await page.getByRole('button', { name: 'Reset' }).click()
+    await expect(tileCount()).toHaveCount(7)
+    expect(await shown()).toEqual([...pick].sort((x, y) => x - y))
+    await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0)
+    await expect.poll(async () => (await a.tool('proposal_status', { proposal_id: id })).edited).toBe(false)
+  } finally {
+    a.proc.kill()
+  }
+})
+
+test('assistant best of (QA, AC-7, macOS): with the window closed, a proposal opens a new one showing the pick', async () => {
+  test.skip(process.platform !== 'darwin', 'only macOS keeps running with no window open')
+  await chooseLibrary()
+  const status = await page.evaluate(() => window.api.setAssistantAccess(true))
+  const a = assistantFrom(status.desktopJson!)
+  try {
+    await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
+    const all: number[] = (await a.tool('search_photos', { limit: 200 })).photos.map((p: { id: number }) => p.id)
+    const album = await a.tool('create_album', { name: 'Lofoten', photo_ids: all })
+    const old = (await a.tool('propose_selection', { album_id: album.album_id, photo_ids: all.slice(0, 6) })).proposal_id
+    await expect(tileCount()).toHaveCount(6, { timeout: 2000 })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
+    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(0)
+    expect((await a.tool('proposal_status', { proposal_id: old })).status).toBe('closed')
+
+    const opened = app.waitForEvent('window')
+    await a.tool('propose_selection', { album_id: album.album_id, photo_ids: all.slice(0, 7) })
+    page = await opened
+    await expect(page.getByRole('heading', { name: 'Best of Lofoten' })).toBeVisible({ timeout: 5000 })
+    await expect(tileCount()).toHaveCount(7)
   } finally {
     a.proc.kill()
   }

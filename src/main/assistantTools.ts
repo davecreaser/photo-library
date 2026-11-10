@@ -1,9 +1,15 @@
-// The five tools an AI assistant can use through assistant access (spec 0008).
+// The tools an AI assistant can use through assistant access (spec 0008; best_of and proposals, spec 0009).
 // Every result is built field by field from what ADR 0011 allows: capture dates, counts, album
-// names, people's names, favourite stars, why a photo matched and analysis progress, with photos
-// referred to by id. Never a path, file or folder name, hash, place, camera or pixel.
+// names, people's names, favourite stars, why a photo matched, Best of reasons and look-alike
+// alternatives, and analysis progress, with photos referred to by id. Never a path, file or folder
+// name, hash, place, camera, pixel or quality score. Suggested albums stay out: their ids and
+// names are folder names.
 import type { LibraryDb } from './db.ts'
 import type { PhotoSearch } from './photoSearch.ts'
+import type { BestOfService } from './bestOfService.ts'
+import type { Proposals } from './proposals.ts'
+import { MIN_SET } from './bestOf.ts'
+import { reasonText } from '../shared/bestOfReasons.ts'
 import type { ContentProgress, PhotoFilter } from '../shared/types.ts'
 
 /** An error the assistant should read: a plain sentence saying what to do next. */
@@ -15,6 +21,12 @@ const MAX_PAGE = 200
 const DEFAULT_PAGE = 50
 const MAX_NAME = 100
 const LISTED_PEOPLE = 50
+const MIN_PICK = 6
+const MAX_PICK = 200
+const MAX_FOCUS = 200
+const MAX_ALTERNATIVES = 5
+export const PROPOSAL_WAITING =
+  "Waiting for the owner in Photo Library. Call proposal_status with this proposal_id to see what they decided; don't make this album yourself."
 
 export interface ToolDefinition {
   name: string
@@ -91,6 +103,50 @@ Returns total (all matches) first, then the page: per photo its id, capture time
       required: ['album_id', 'photo_ids'],
       additionalProperties: false
     }
+  },
+  {
+    name: 'best_of',
+    description: `Ask Photo Library to choose the best photos of an album, as its Best of screen does: it sees the photos (sharpness, exposure, faces, what they show), so its pick is better than one made from dates and names. It leaves out near-identical shots, spreads the pick over the album's moments, includes the named people who appear, and prefers the owner's stars. Reading never changes the album.
+- album_id: any album from library_overview (the owner's or yours). For a year, a date range or a person's photos, first find them with search_photos, make an album of them with create_album, then run best_of on that album. Suggested albums aren't available: find their photos with search_photos instead.
+- count: how many, ${MIN_PICK}-${MAX_PICK}; by default about 10% of the album (12 to 60).
+- focus: words to lean towards, as in the app's "Focus on…" box (at most ${MAX_FOCUS} characters), e.g. "the kids" or "food".
+- include / exclude: photo ids that must be in the pick, or must never be, at most ${MAX_IDS} each. Use them to adjust a pick when the owner asks ("not that one", "keep this one").
+Returns the album, its photo count, the count used and the default, how many moments it has, any notes, then the photos in capture-time order: id, capture time, people, albums, favorite, a reason (why it was picked, in the app's words), and alternatives: up to ${MAX_ALTERNATIVES} ids of near-identical shots that weren't picked, best first, to swap in. To show the owner the pick for approval, pass the ids to propose_selection. Example: best_of({"album_id": 41, "count": 30, "focus": "the beach"}).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        album_id: { type: 'integer', description: 'The album to choose from (ids from library_overview).' },
+        count: { type: 'integer', minimum: MIN_PICK, maximum: MAX_PICK, description: 'How many photos to pick.' },
+        focus: { type: 'string', maxLength: MAX_FOCUS, description: 'Words to lean towards, e.g. "sunsets".' },
+        include: idList('that must be in the pick'),
+        exclude: idList('that must never be picked')
+      },
+      required: ['album_id'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'propose_selection',
+    description: `Show the owner a pick of an album's photos in Photo Library for them to review: the app comes forward on its Best of screen with exactly these photos. The owner swaps, removes or adds photos and decides there; only they can keep it, by pressing Make album, which makes their own album "Best of <album name>". Returns at once with a proposal_id, without waiting for the owner. Call proposal_status with it later to learn what they decided. Don't make the same album yourself with create_album. photo_ids: ${MIN_PICK}-${MAX_PICK} ids of photos in that album (from best_of or search_photos); for fewer than ${MIN_PICK}, use create_album. A new proposal replaces one the owner hasn't decided on. Example: propose_selection({"album_id": 41, "photo_ids": [812, 815, 990, 1002, 1010, 1044]}).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        album_id: { type: 'integer', description: 'The album the photos are from.' },
+        photo_ids: { type: 'array', items: { type: 'integer' }, minItems: MIN_PICK, maxItems: MAX_PICK, description: 'The photos to propose.' }
+      },
+      required: ['album_id', 'photo_ids'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'proposal_status',
+    description: `What the owner decided about a proposal from propose_selection. status is one of: "waiting" (still showing in Photo Library; edited: true once they've changed it), "approved" (they made an album from it: its album_id, name and photo count, how many of your photos they kept, and the ids they added and removed), "closed" (they left it without making an album), "replaced" (a newer proposal took its place: by_proposal_id), or "expired" (Photo Library quit, or assistant access was turned off or reset). Proposals last until Photo Library is closed. Example: proposal_status({"proposal_id": 3}).`,
+    inputSchema: {
+      type: 'object',
+      properties: { proposal_id: { type: 'integer', description: 'The id propose_selection returned.' } },
+      required: ['proposal_id'],
+      additionalProperties: false
+    }
   }
 ]
 
@@ -101,6 +157,10 @@ export interface ToolContext {
   contentProgress: () => ContentProgress
   /** Called after an album change, so the window shows it (AC-13). */
   albumsChanged: () => void
+  /** The Best of engine, as the window uses it (spec 0009, AC-3). */
+  bestOf: BestOfService
+  /** Proposals, shared by every connection: one shows at a time (spec 0009, AC-9). */
+  proposals: Proposals
 }
 
 type Args = Record<string, unknown>
@@ -123,14 +183,14 @@ function integer(v: unknown, field: string, min: number, max: number): number | 
   return v
 }
 
-function photoIds(v: unknown, required: boolean): number[] {
+function photoIds(v: unknown, required: boolean, field = 'photo_ids'): number[] {
   if (v === undefined || v === null) {
-    if (required) throw new ToolError('photo_ids is required: a list of photo ids from search_photos.')
+    if (required) throw new ToolError(`${field} is required: a list of photo ids from search_photos.`)
     return []
   }
   if (!Array.isArray(v) || v.some((x) => typeof x !== 'number' || !Number.isInteger(x)))
-    throw new ToolError('photo_ids must be a list of photo ids (whole numbers) from search_photos.')
-  if (v.length > MAX_IDS) throw new ToolError(`photo_ids can hold at most ${MAX_IDS} ids per call; split them over several calls.`)
+    throw new ToolError(`${field} must be a list of photo ids (whole numbers) from search_photos.`)
+  if (v.length > MAX_IDS) throw new ToolError(`${field} can hold at most ${MAX_IDS} ids per call; split them over several calls.`)
   return [...new Set(v as number[])]
 }
 
@@ -168,6 +228,15 @@ export class AssistantTools {
       case 'remove_from_album':
         unknownArgs(args, ['album_id', 'photo_ids'])
         return this.change(args, 'remove')
+      case 'best_of':
+        unknownArgs(args, ['album_id', 'count', 'focus', 'include', 'exclude'])
+        return this.bestOf(args)
+      case 'propose_selection':
+        unknownArgs(args, ['album_id', 'photo_ids'])
+        return this.propose(args)
+      case 'proposal_status':
+        unknownArgs(args, ['proposal_id'])
+        return this.proposalStatus(args)
       default:
         throw new ToolError(`There is no tool called "${name}". The tools are: ${TOOL_DEFINITIONS.map((t) => t.name).join(', ')}.`)
     }
@@ -314,5 +383,149 @@ export class AssistantTools {
     })
     this.ctx.albumsChanged()
     return result
+  }
+
+  /** An album the assistant may read: any album, the owner's or its own. */
+  private album(v: unknown): { id: number; name: string } {
+    const id = integer(v, 'album_id', 1, Number.MAX_SAFE_INTEGER)
+    if (id === undefined) throw new ToolError('album_id is required: an album id from library_overview.')
+    const album = this.ctx.db.albumInfo(id)
+    if (!album) throw new ToolError(`There is no album with id ${id}. library_overview lists the albums.`)
+    return { id, name: album.name }
+  }
+
+  private async bestOf(args: Args): Promise<unknown> {
+    const { db } = this.ctx
+    const album = this.album(args.album_id)
+    const requested = integer(args.count, 'count', MIN_PICK, MAX_PICK)
+    if (args.focus !== undefined && args.focus !== null && typeof args.focus !== 'string')
+      throw new ToolError('focus must be text, e.g. "the beach", at most 200 characters.')
+    if (typeof args.focus === 'string' && args.focus.length > MAX_FOCUS) throw new ToolError(`focus must be at most ${MAX_FOCUS} characters.`)
+    const focus = typeof args.focus === 'string' ? args.focus.trim() : ''
+    if (focus.length > MAX_FOCUS) throw new ToolError(`focus must be at most ${MAX_FOCUS} characters.`)
+    const include = photoIds(args.include, false, 'include')
+    const exclude = photoIds(args.exclude, false, 'exclude')
+    const both = include.filter((id) => exclude.includes(id))
+    if (both.length) throw new ToolError(`Photo ${both.join(', ')} is in both include and exclude; keep it in only one.`)
+
+    const inAlbum = new Set(db.albumPhotoIds(album.id))
+    const notInAlbum = [...include, ...exclude].filter((id) => !inAlbum.has(id))
+    const fixed = include.filter((id) => inAlbum.has(id))
+    const excluded = exclude.filter((id) => inAlbum.has(id))
+    const notes: string[] = []
+    const total = inAlbum.size
+    if (total < MIN_SET) {
+      notes.push(`This album has only ${total} ${total === 1 ? 'photo' : 'photos'}, too few to choose from: use them all, or search_photos for more.`)
+      return {
+        album_id: album.id,
+        name: album.name,
+        total,
+        too_few: true,
+        notes,
+        ...(notInAlbum.length ? { not_in_album: notInAlbum } : {}),
+        photos: []
+      }
+    }
+    if (fixed.length > MAX_PICK) throw new ToolError(`include can hold at most ${MAX_PICK} photos of the album, the most best_of picks.`)
+    // More include ids than the count raise the count to fit them (AC-2).
+    const source = { kind: 'album' as const, id: album.id }
+    const ask = (count: number | undefined) => this.ctx.bestOf.get({ source, count, focus: focus || undefined, fixed, exclude: excluded })
+    let result = await ask(requested)
+    if (fixed.length > result.count) {
+      notes.push(`count was raised to ${fixed.length} to fit every photo in include.`)
+      result = await ask(fixed.length)
+    }
+    if (result.pending.done < result.pending.total)
+      notes.push(
+        `Quality is measured for ${result.pending.done} of ${result.pending.total} photos so far; the pick will improve as Photo Library reads the rest.`
+      )
+    if (result.focusUnavailable) notes.push('focus is unavailable until content analysis is ready; the pick ignores it.')
+
+    const ids = result.photos.map((p) => p.id)
+    const picked = new Set(ids)
+    const excludedSet = new Set(excluded)
+    const facts = db.peopleAndAlbums(ids)
+    const photos = result.photos.map((p) => {
+      const f = facts.get(p.id)!
+      const r = result.reasons[p.id]
+      const group = result.groups.find((g) => g.includes(p.id))
+      const alternatives = (group ?? []).filter((id) => !picked.has(id) && !excludedSet.has(id)).slice(0, MAX_ALTERNATIVES)
+      return {
+        id: p.id,
+        taken: minute(p.takenAt),
+        people: f.people,
+        albums: f.albums,
+        favorite: p.favorite,
+        reason: !r || r.kind === 'yours' ? 'Included as you asked' : reasonText(r),
+        ...(alternatives.length ? { alternatives } : {})
+      }
+    })
+    return {
+      album_id: album.id,
+      name: album.name,
+      total: result.total,
+      count: result.count,
+      default_count: result.defaultCount,
+      moments: result.momentCount,
+      ...(notes.length ? { notes } : {}),
+      ...(notInAlbum.length ? { not_in_album: notInAlbum } : {}),
+      photos
+    }
+  }
+
+  private propose(args: Args): unknown {
+    const { db } = this.ctx
+    const album = this.album(args.album_id)
+    if (Array.isArray(args.photo_ids) && args.photo_ids.length > MAX_IDS) throw new ToolError(`A proposal can hold at most ${MAX_PICK} photos; choose fewer.`)
+    const ids = photoIds(args.photo_ids, true)
+    if (ids.length > MAX_PICK) throw new ToolError(`A proposal can hold at most ${MAX_PICK} photos; choose fewer.`)
+    const inAlbum = new Set(db.albumPhotoIds(album.id))
+    const chosen = ids.filter((id) => inAlbum.has(id))
+    const notInAlbum = ids.filter((id) => !inAlbum.has(id))
+    if (chosen.length < MIN_PICK || inAlbum.size < MIN_SET) {
+      const why = notInAlbum.length ? ` ${notInAlbum.length} of the ids given aren't photos of this album.` : ''
+      throw new ToolError(`A proposal needs at least ${MIN_PICK} photos of the album; for fewer, use create_album.${why}`)
+    }
+    const p = this.ctx.proposals.propose(album.id, album.name, chosen)
+    return {
+      proposal_id: p.id,
+      album_id: album.id,
+      name: album.name,
+      photos: chosen.length,
+      not_in_album: notInAlbum,
+      status: 'waiting',
+      message: PROPOSAL_WAITING
+    }
+  }
+
+  private proposalStatus(args: Args): unknown {
+    const id = integer(args.proposal_id, 'proposal_id', 1, Number.MAX_SAFE_INTEGER)
+    if (id === undefined) throw new ToolError('proposal_id is required: the id propose_selection returned.')
+    const p = this.ctx.proposals.get(id)
+    if (!p) throw new ToolError(`No proposal with id ${id}. Proposals last until Photo Library is closed.`)
+    const base = { proposal_id: p.id, album_id: p.albumId, status: p.status }
+    switch (p.status) {
+      case 'waiting':
+        return { ...base, edited: p.edited }
+      case 'approved': {
+        const made = p.approved!
+        const proposed = new Set(p.photoIds)
+        const inMade = new Set(made.photoIds)
+        return {
+          proposal_id: p.id,
+          status: p.status,
+          album_id: made.albumId,
+          name: made.name,
+          photos: made.photoIds.length,
+          kept: made.photoIds.filter((x) => proposed.has(x)).length,
+          added: made.photoIds.filter((x) => !proposed.has(x)),
+          removed: p.photoIds.filter((x) => !inMade.has(x))
+        }
+      }
+      case 'replaced':
+        return { ...base, by_proposal_id: p.by }
+      default:
+        return base
+    }
   }
 }

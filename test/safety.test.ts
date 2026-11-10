@@ -62,6 +62,26 @@ test('source audit: only appFiles.ts and fsGuard.ts can write', () => {
   assert.deepEqual(problems, [])
 })
 
+test('source audit: the assistant relay only relays (spec 0008, AC-3)', () => {
+  const code = fs.readFileSync(join(SRC, 'relay', 'relay.ts'), 'utf8')
+  const imports = [...code.matchAll(/(?:import|require)\s*(?:[^'"]*from\s*)?\(?\s*['"]([^'"]+)['"]/g)].map((m) => m[1])
+  assert.deepEqual(imports, ['node:net'])
+  assert.doesNotMatch(code, /\bprocess\.(binding|dlopen)|\beval\(|new Function|console\.|\bfetch\(/)
+})
+
+test('source audit: nothing listens on a network port or makes network requests (ADR 0003, spec 0008 AC-4)', () => {
+  const problems: string[] = []
+  for (const file of sourceFiles(SRC)) {
+    const rel = relative(SRC, file).split(sep).join('/')
+    const code = fs.readFileSync(file, 'utf8')
+    if (/from\s*['"](node:)?(http|https|http2|dgram|tls)['"]/.test(code)) problems.push(`${rel}: imports a network module`)
+    if (/\.listen\(\s*\d|\.listen\(\s*\{[^}]*\bport\b|\bport\s*:/.test(code)) problems.push(`${rel}: listens on a port`)
+    // The photo:// protocol serves local files with net.fetch(pathToFileURL(…)): local, so allowed.
+    if (/\bfetch\(|XMLHttpRequest|WebSocket\(/.test(code.replaceAll('net.fetch(pathToFileURL(', ''))) problems.push(`${rel}: makes network requests`)
+  }
+  assert.deepEqual(problems, [])
+})
+
 // --- runtime guard ---
 
 const root = fs.mkdtempSync(join(tmpdir(), 'photo-library-safety-'))
@@ -222,6 +242,27 @@ test('the export grant is narrow, per export, and never reaches a photo folder',
   // After the export ended, nothing is writable there any more.
   assert.throws(() => fs.writeFileSync(join(dest, '0002.jpg'), 'late'), ProtectedPathError)
   assert.throws(() => fs.mkdirSync(join(root, 'exports', 'again')), ProtectedPathError)
+})
+
+// --- assistant access files (spec 0008) ---
+
+test('assistant access files: the new appFiles functions never reach a photo folder', async () => {
+  const { ensurePrivateDir, writePrivateFile, makeSocketPrivate, removeStaleSocket } = await import('../src/main/appFiles.ts')
+  await assert.rejects(() => ensurePrivateDir(join(photos, 'assistant')), ProtectedPathError)
+  await assert.rejects(() => writePrivateFile(join(photos, 'trip', 'IMG_0001.JPG'), 'x'), ProtectedPathError)
+  await assert.rejects(() => writePrivateFile(join(photos, 'token'), 'x'), ProtectedPathError)
+  if (process.platform !== 'win32') await assert.rejects(() => makeSocketPrivate(photo), ProtectedPathError)
+  // Only a socket, only in a folder called "assistant": a photo is neither.
+  await assert.rejects(() => removeStaleSocket(photo), /Not an assistant socket/)
+  await assert.rejects(() => removeStaleSocket(join(appData, '..', 'photos', 'trip', 'IMG_0001.JPG')), /Not an assistant socket/)
+  // In app data they work, owner-only.
+  await ensurePrivateDir(join(appData, 'assistant'))
+  await writePrivateFile(join(appData, 'assistant', 'token'), 'secret')
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(join(appData, 'assistant')).mode & 0o777, 0o700)
+    assert.equal(fs.statSync(join(appData, 'assistant', 'token')).mode & 0o777, 0o600)
+  }
+  await assert.rejects(() => removeStaleSocket(join(appData, 'assistant', 'token')), /Not a socket/)
 })
 
 test('after all attacks the photo folder is exactly as it was', () => {

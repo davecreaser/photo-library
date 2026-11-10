@@ -1,6 +1,7 @@
 // End-to-end: the real built app, driven like a user, against a synthetic library.
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1368,5 +1369,101 @@ test('save copies (AC-6,7): Cancel while saving keeps the dialog usable and says
   } finally {
     rmSync(own.root, { recursive: true, force: true })
     rmSync(dest, { recursive: true, force: true })
+  }
+})
+
+// --- assistant access (spec 0008) ---
+
+/** Runs the relay exactly as the Claude Desktop setup shown in the dialog says; returns a JSON-RPC caller. */
+function assistantFrom(desktopJson: string) {
+  const entry = JSON.parse(desktopJson).mcpServers['photo-library']
+  expect(entry.command).toBe('node')
+  const proc = spawn(process.execPath, entry.args, { env: { ...process.env, ...entry.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+  let out = ''
+  let buf = ''
+  const waiting = new Map<number, (m: any) => void>()
+  proc.stdout!.setEncoding('utf8').on('data', (c: string) => {
+    out += c
+    buf += c
+    let at
+    while ((at = buf.indexOf('\n')) >= 0) {
+      const m = JSON.parse(buf.slice(0, at))
+      buf = buf.slice(at + 1)
+      waiting.get(m.id)?.(m)
+    }
+  })
+  let id = 0
+  const rpc = (method: string, params?: unknown): Promise<any> =>
+    new Promise((resolve, reject) => {
+      const myId = ++id
+      const t = setTimeout(() => reject(new Error(`no answer to ${method}`)), 5000)
+      waiting.set(myId, (m) => {
+        clearTimeout(t)
+        resolve(m)
+      })
+      proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id: myId, method, params }) + '\n')
+    })
+  const tool = async (name: string, args: Record<string, unknown> = {}) => {
+    const m = await rpc('tools/call', { name, arguments: args })
+    if (m.error) return { rpcError: m.error.message as string }
+    return m.result.isError ? { error: m.result.content[0].text as string } : JSON.parse(m.result.content[0].text)
+  }
+  return { proc, rpc, tool, out: () => out }
+}
+
+test('assistant access (spec 0008): off by default; the shown setup connects; all five tools; live AI album; turning off cuts it', async () => {
+  await chooseLibrary()
+  const link = page.locator('.sidebar-footer').getByRole('button', { name: 'Assistant access…' })
+  await expect(link).toBeVisible()
+  await link.click()
+  const dialog = page.getByRole('dialog', { name: 'Assistant access' })
+  const toggle = dialog.getByLabel('Let AI assistants use this library')
+  await expect(toggle).not.toBeChecked()
+  await expect(dialog.getByText('Set up an assistant')).toHaveCount(0)
+  await toggle.check()
+  await expect(dialog.getByText('Set up an assistant')).toBeVisible({ timeout: 2000 })
+  await expect(page.locator('.sidebar-footer').getByRole('button', { name: 'Assistant access (on)…' })).toBeVisible()
+  const desktopJson = (await dialog.getByLabel('Claude Desktop setup').textContent())!
+  await expect(dialog.getByLabel('Claude Code setup')).toContainText('claude mcp add --scope user')
+  await dialog.getByRole('button', { name: 'Copy' }).first().click()
+  await expect(dialog.getByRole('button', { name: 'Copied' })).toBeVisible()
+  expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(desktopJson)
+
+  const a = assistantFrom(desktopJson)
+  try {
+    expect(
+      (await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })).result.serverInfo.name
+    ).toBe('photo-library')
+    expect((await a.rpc('tools/list')).result.tools).toHaveLength(5)
+    const overview = await a.tool('library_overview')
+    expect(overview.photos).toBe(lib.uniquePhotos)
+    const all = await a.tool('search_photos', { limit: 200 })
+    expect(all.total).toBe(lib.uniquePhotos)
+    expect((await a.tool('search_photos', { text: 'secret' })).total).toBe(0) // private folders stay invisible
+    const ids = all.photos.map((p: { id: number }) => p.id)
+    const made = await a.tool('create_album', { name: 'Picked by Claude', photo_ids: ids.slice(0, 2) })
+    expect(made.added).toBe(2)
+    // The album appears in the open window within a second, marked.
+    const row = page.locator('.sidebar .nav-item.album', { hasText: 'Picked by Claude' })
+    await expect(row).toBeVisible({ timeout: 1000 })
+    await expect(row.locator('.ai-pill')).toHaveText('AI')
+    expect((await a.tool('add_to_album', { album_id: made.album_id, photo_ids: [ids[2]] })).added).toBe(1)
+    expect((await a.tool('remove_from_album', { album_id: made.album_id, photo_ids: [ids[0]] })).removed).toBe(1)
+    await expect(row.locator('.count')).toHaveText('2', { timeout: 1000 })
+    // Nothing about files or folders reaches the assistant.
+    for (const leak of [lib.root, 'secret', '.jpg', '.JPG', 'fuji']) expect(a.out()).not.toContain(leak)
+
+    // Turned off: the assistant is told to turn it back on.
+    await toggle.uncheck()
+    await expect(dialog.getByText('Set up an assistant')).toHaveCount(0)
+    const off = await a.tool('library_overview')
+    expect(off.rpcError).toMatch(/Open Photo Library and turn on assistant access|turned off/)
+    await dialog.getByRole('button', { name: 'Done' }).click()
+
+    // The owner opens the album: the subtitle says who made it.
+    await row.click()
+    await expect(page.locator('.content-header .subtitle')).toContainText('Made by an AI assistant')
+  } finally {
+    a.proc.kill()
   }
 })

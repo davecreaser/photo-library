@@ -1137,3 +1137,37 @@ label.toggle {
 .modal-footer {
   gap: 8px;
 }
+
+/* Assistant access (spec 0008) */
+.ai-pill {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 0 4px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.assistant-dialog {
+  max-width: 640px;
+}
+.assistant-dialog h4 {
+  margin: 12px 0 4px;
+}
+.snippet {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--panel, rgba(127, 127, 127, 0.12));
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  user-select: text;
+  margin: 4px 0;
+}
+.snippet.wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.forget-assistants {
+  margin-top: 12px;
+}

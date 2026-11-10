@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import type { Album, FaceProgress, LibraryInfo, Person, Tag, TimelineMonth } from '../../../shared/types.ts'
+import type { Album, AssistantStatus, FaceProgress, LibraryInfo, Person, Tag, TimelineMonth } from '../../../shared/types.ts'
 import type { SidebarSections } from '../../../shared/sidebarSections.ts'
 import type { View } from '../App.tsx'
 import { monthName } from '../format.ts'
 import { AlbumPicker } from './AlbumPicker.tsx'
 import { InlineInput } from './InlineInput.tsx'
+import { ASSISTANT_ALBUM_HINT } from './AssistantDialog.tsx'
 
 interface Props {
   library: LibraryInfo
@@ -24,6 +25,8 @@ interface Props {
   onShowCorrections: () => void
   onShowIgnored: () => void
   onShowBestOf: () => void
+  assistantStatus: AssistantStatus | null
+  onShowAssistant: () => void
 }
 
 const api = window.api
@@ -44,7 +47,9 @@ export function Sidebar({
   onAlbumsChanged,
   onShowCorrections,
   onShowIgnored,
-  onShowBestOf
+  onShowBestOf,
+  assistantStatus,
+  onShowAssistant
 }: Props) {
   const [openYears, setOpenYears] = useState<Set<string>>(new Set())
   // Which album is being created under (null = top level), renamed, or confirmed for deletion.
@@ -166,7 +171,14 @@ export function Sidebar({
                 style={{ paddingLeft: 12 + depth * 14 }}
                 onClick={() => onNavigate({ kind: 'album', id: a.id })}
               >
-                <span className="label">📁 {a.name}</span>
+                <span className="label" title={a.madeByAssistant ? ASSISTANT_ALBUM_HINT : undefined}>
+                  📁 {a.name}
+                </span>
+                {a.madeByAssistant && (
+                  <span className="ai-pill" title={ASSISTANT_ALBUM_HINT}>
+                    AI
+                  </span>
+                )}
                 <span className="count">{a.photoCount}</span>
                 <span className="actions" onClick={(e) => e.stopPropagation()}>
                   <button title="New sub-album" onClick={() => setCreatingUnder(a.id)}>
@@ -356,6 +368,13 @@ export function Sidebar({
         </button>
         <button className="link" onClick={onShowBestOf}>
           Best of settings…
+        </button>
+        <button className={`link ${assistantStatus?.state === 'failed' ? 'danger-link' : ''}`} onClick={onShowAssistant}>
+          {assistantStatus?.state === 'on'
+            ? 'Assistant access (on)…'
+            : assistantStatus?.state === 'failed'
+              ? "Assistant access (couldn't start)…"
+              : 'Assistant access…'}
         </button>
         <div className="base-path" title={library.basePath ?? ''}>
           📂 {library.basePath}

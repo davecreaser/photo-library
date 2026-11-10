@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell } from 'electron'
 import { tmpdir } from 'node:os'
 import { extname, isAbsolute, join, relative, sep } from 'node:path'
 import { readdirSync, realpathSync } from 'node:fs'
@@ -19,6 +19,8 @@ import { PhotoSearch } from './photoSearch.ts'
 import { ContentModelWorker } from './contentModelWorker.ts'
 import createContentWorker from './contentWorker.ts?nodeWorker'
 import { BestOfService } from './bestOfService.ts'
+import { AssistantAccess } from './assistantAccess.ts'
+import { AssistantTools } from './assistantTools.ts'
 import type {
   BestOfRequest,
   BestOfSource,
@@ -42,6 +44,7 @@ let people: People
 let analysis: Analysis
 let search: PhotoSearch
 let bestOfService: BestOfService
+let assistant: AssistantAccess
 let window: BrowserWindow | null = null
 let currentScan: Promise<void> | null = null
 let scanAgain = false
@@ -290,6 +293,9 @@ function registerIpc(): void {
       })
       return null
     }
+    // A different photo folder is a different library: assistant access turns off (spec 0008, AC-1).
+    const previous = db.getSetting('basePath')
+    if (previous && previous !== folder) await assistant.turnOff()
     // Protect the new folder before it becomes the base.
     db.setSetting('protectedRoots', JSON.stringify([...new Set([...protectedRoots, folder])]))
     db.setSetting('basePath', folder)
@@ -298,6 +304,18 @@ function registerIpc(): void {
     return libraryInfo()
   })
   ipcMain.handle('scan:start', () => void startScan())
+
+  ipcMain.handle('assistant:get', () => assistant.status())
+  ipcMain.handle('assistant:set', (_e, on: boolean) => (on ? assistant.turnOn() : assistant.turnOff()))
+  ipcMain.handle('assistant:forget', () => assistant.forget())
+  ipcMain.handle('clipboard:write', (_e, text: string) => {
+    try {
+      clipboard.writeText(String(text))
+      return true
+    } catch {
+      return false
+    }
+  })
 
   ipcMain.handle('sidebar:get', () => parseSidebarSections(db.getSetting('sidebarSections')))
   ipcMain.handle('sidebar:set', (_e, s: SidebarSections) => {
@@ -446,16 +464,49 @@ app.whenReady().then(() => {
     (e) => analysis.unavailable(e)
   )
   bestOfService = new BestOfService(db, organiser, search)
+  assistant = new AssistantAccess({
+    dataDir,
+    db,
+    // Built next to this file (electron.vite.config.ts); assistants run it with node.
+    relayPath: join(__dirname, 'relay.js'),
+    version: app.getVersion(),
+    makeTools: () =>
+      new AssistantTools({
+        db,
+        // Each connection searches on its own, so its paging never disturbs the window's.
+        search: new PhotoSearch(
+          db,
+          () => analysis.contentModel(),
+          (e) => analysis.unavailable(e)
+        ),
+        contentProgress: () => analysis.contentProgress(),
+        albumsChanged: () => window?.webContents.send('albums:changed')
+      }),
+    onChange: (s) => window?.webContents.send('assistant:status', s)
+  })
   loadProtectedRoots()
   registerPhotoProtocol()
   registerIpc()
   createWindow()
+  void assistant.resume()
   // Pick up photos added since last time.
   void startScan()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+// Close the assistant socket (and remove its file) before quitting.
+let assistantClosed = false
+app.on('before-quit', (e) => {
+  if (assistantClosed || !assistant) return
+  e.preventDefault()
+  assistantClosed = true
+  void assistant
+    .shutdown()
+    .catch(() => {})
+    .finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {

@@ -289,6 +289,16 @@ export interface Api {
   revealExport(): Promise<void>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
 
+  /** Assistant access (spec 0008). */
+  getAssistantAccess(): Promise<AssistantStatus>
+  setAssistantAccess(on: boolean): Promise<AssistantStatus>
+  /** Replaces the token: every connected assistant needs setting up again. */
+  forgetAssistants(): Promise<AssistantStatus>
+  onAssistantStatus(cb: (s: AssistantStatus) => void): () => void
+  /** An assistant made or changed an album. */
+  onAlbumsChanged(cb: () => void): () => void
+  /** Puts text on the clipboard; false if that failed. */
+  copyText(text: string): Promise<boolean>
   /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */
   getSidebarSections(): Promise<SidebarSections>
   setSidebarSections(s: SidebarSections): Promise<void>

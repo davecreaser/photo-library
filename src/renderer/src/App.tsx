@@ -112,6 +112,7 @@ export function App() {
   const [bestOfState, setBestOfState] = useState({ edited: false, made: false })
   const [incoming, setIncoming] = useState<ProposalShow | null>(null)
   const [proposalArrivedOver, setProposalArrivedOver] = useState(false)
+  const [proposalArrivals, setProposalArrivals] = useState(0)
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | null>(null)
   // Bumped whenever the photo list for the current view may have changed.
   const [version, setVersion] = useState(0)
@@ -209,6 +210,7 @@ export function App() {
         setShowCorrections(false)
         setShowIgnored(false)
         setShowDismissed(false)
+        setProposalArrivals((n) => n + 1)
         const { view: current, bestOfState: state, incoming: waiting } = live.current
         if (current.kind === 'bestOf' && state.edited && !state.made) {
           if (waiting) api.reportProposal(waiting.proposalId, { kind: 'replaced', by: p.proposalId })
@@ -609,7 +611,9 @@ export function App() {
               </button>
             </div>
           )}
-          {exportingAlbum !== null && <ExportDialog source={{ albumId: exportingAlbum }} onClose={() => setExportingAlbum(null)} />}
+          {exportingAlbum !== null && (
+            <ExportDialog source={{ albumId: exportingAlbum }} onClose={() => setExportingAlbum(null)} closeIfIdle={proposalArrivals} />
+          )}
           {currentSuggestion && selected.size === 0 && (
             <div className="header-actions">
               {namingSuggestion ? (

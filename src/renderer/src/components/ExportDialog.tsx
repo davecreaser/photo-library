@@ -15,7 +15,8 @@ const SIDES: { value: ExportOptions['maxSide']; label: string }[] = [
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
 /** "Save copies…": options, then progress, then what happened (spec 0007). The folder is chosen in the main process. */
-export function ExportDialog({ source: given, onClose }: { source: ExportSource; onClose: () => void }) {
+/** `closeIfIdle` changes when something else takes the screen (an assistant's proposal): the dialog closes unless saving or done. */
+export function ExportDialog({ source: given, onClose, closeIfIdle = 0 }: { source: ExportSource; onClose: () => void; closeIfIdle?: number }) {
   const [source] = useState(given) // fixed when opened, even if the selection behind the dialog changes
   const [summary, setSummary] = useState<ExportSummary | null>(null)
   const [options, setOptions] = useState<ExportOptions | null>(null)
@@ -25,6 +26,11 @@ export function ExportDialog({ source: given, onClose }: { source: ExportSource;
   const opener = useRef<Element | null>(document.activeElement)
   const stageRef = useRef(stage)
   stageRef.current = stage
+
+  const firstClose = useRef(closeIfIdle)
+  useEffect(() => {
+    if (closeIfIdle !== firstClose.current && stageRef.current.kind === 'options') onClose()
+  }, [closeIfIdle])
 
   useEffect(() => {
     void api.exportSummary(source).then((s) => {

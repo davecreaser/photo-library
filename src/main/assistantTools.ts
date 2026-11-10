@@ -400,6 +400,7 @@ export class AssistantTools {
     const requested = integer(args.count, 'count', MIN_PICK, MAX_PICK)
     if (args.focus !== undefined && args.focus !== null && typeof args.focus !== 'string')
       throw new ToolError('focus must be text, e.g. "the beach", at most 200 characters.')
+    if (typeof args.focus === 'string' && args.focus.length > MAX_FOCUS) throw new ToolError(`focus must be at most ${MAX_FOCUS} characters.`)
     const focus = typeof args.focus === 'string' ? args.focus.trim() : ''
     if (focus.length > MAX_FOCUS) throw new ToolError(`focus must be at most ${MAX_FOCUS} characters.`)
     const include = photoIds(args.include, false, 'include')
@@ -475,6 +476,7 @@ export class AssistantTools {
   private propose(args: Args): unknown {
     const { db } = this.ctx
     const album = this.album(args.album_id)
+    if (Array.isArray(args.photo_ids) && args.photo_ids.length > MAX_IDS) throw new ToolError(`A proposal can hold at most ${MAX_PICK} photos; choose fewer.`)
     const ids = photoIds(args.photo_ids, true)
     if (ids.length > MAX_PICK) throw new ToolError(`A proposal can hold at most ${MAX_PICK} photos; choose fewer.`)
     const inAlbum = new Set(db.albumPhotoIds(album.id))

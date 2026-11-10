@@ -1,6 +1,8 @@
 // Assistant access: best photos and proposals (spec 0009), driven by an MCP client over a real
 // local socket. Generated data only.
 import { test } from 'node:test'
+import { DatabaseSync } from 'node:sqlite'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { QUALITY_VERSION } from '../src/main/quality.ts'
 import { PROPOSAL_WAITING, TOOL_DEFINITIONS } from '../src/main/assistantTools.ts'
@@ -288,6 +290,10 @@ test('AC-12: no path, folder or file name, hash, place, camera or quality score 
     ['proposal_status', { proposal_id: 999 }]
   ]
   for (const [name, args] of calls) await c.tool(name, args)
+  const q = (await c.tool('propose_selection', { album_id: albumId, photo_ids: ids.slice(0, 6) })).proposal_id
+  const kept = lib.bestOf.makeAlbum({ kind: 'album', id: albumId }, ids.slice(0, 5))
+  lib.proposals.report(q, { kind: 'approved', albumId: kept.id, name: kept.name, photoIds: ids.slice(0, 5) })
+  assert.equal((await c.tool('proposal_status', { proposal_id: q })).status, 'approved')
   for (const e of [{ kind: 'edited', edited: true }, { kind: 'replaced', by: p }, { kind: 'closed' }] as const) {
     lib.proposals.report(p, e)
     await c.tool('proposal_status', { proposal_id: p })
@@ -334,5 +340,63 @@ test('AC-13: best_of on a 5,000-photo album within 2 s, propose_selection within
   assert.ok(Date.now() - t < 1000)
   await b.tool('propose_selection', { album_id: album.id, photo_ids: rb.photos.map((p: { id: number }) => p.id) })
   assert.equal(lib.shown.length, 2, 'each proposal reaches the window, which shows one at a time')
+  await lib.close()
+})
+
+// --- QA gaps (spec 0009 QA) ---
+
+test('QA AC-2, AC-4, AC-5, AC-6: missing and ignored photos are never picked, offered or counted; count is capped at the album; alternatives best first', async () => {
+  const lib = await setup()
+  const { albumId, ids } = trip(lib, { days: 1, shots: 4 }) // 12 photos: 3 bursts of 4
+  const [hidden] = lib.add(1, { folder: 'private', first: '2024-07-10T09:01:00' })
+  lib.db.addToAlbum(albumId, [hidden])
+  const gone = [ids[1], ids[2]] // two shots of the first burst go missing
+  const raw = new DatabaseSync(join(lib.dir, 'library.db'))
+  for (const id of gone) raw.prepare('UPDATE files SET missing = 1 WHERE photo_id = ?').run(id)
+  raw.close()
+  lib.db.forgetFiles((p) => p.split('/').includes('private'))
+  lib.db.refreshDerived()
+  const c = await client(lib)
+
+  const r = await c.tool('best_of', { album_id: albumId, count: 200, include: [gone[0], hidden] })
+  assert.equal(r.total, ids.length - gone.length, 'missing and ignored photos are not counted')
+  assert.equal(r.count, r.total, 'count is capped at the album’s present photos')
+  assert.deepEqual(r.not_in_album, [gone[0], hidden])
+  const offered = r.photos.flatMap((p: { id: number; alternatives?: number[] }) => [p.id, ...(p.alternatives ?? [])])
+  for (const id of [...gone, hidden]) assert.ok(!offered.includes(id), `photo ${id} is never picked or offered`)
+
+  // Alternatives are look-alikes, best first, as the app's look-alike strip orders them.
+  const small = await c.tool('best_of', { album_id: albumId, count: 6 })
+  const groups = await lib.bestOf.lookalikes({ kind: 'album', id: albumId })
+  for (const p of small.photos as { id: number; alternatives?: number[] }[]) {
+    if (!p.alternatives) continue
+    const g = groups.find((x) => x.includes(p.id))!
+    assert.deepEqual(
+      p.alternatives,
+      g.filter((id) => p.alternatives!.includes(id)),
+      'in the group’s best-first order'
+    )
+  }
+
+  const prop = await c.tool('propose_selection', { album_id: albumId, photo_ids: [...ids.slice(3, 9), gone[0], hidden] })
+  assert.equal(prop.photos, 6)
+  assert.deepEqual(prop.not_in_album, [gone[0], hidden])
+  assert.deepEqual(lib.shown.at(-1)!.photoIds, ids.slice(3, 9))
+  await lib.close()
+})
+
+test('QA AC-9: a decision from the window counts only once; later reports change nothing', async () => {
+  const lib = await setup()
+  const { albumId, ids } = trip(lib)
+  const c = await client(lib)
+  const id = (await c.tool('propose_selection', { album_id: albumId, photo_ids: ids.slice(0, 6) })).proposal_id
+  lib.proposals.report(id, { kind: 'closed' })
+  lib.proposals.report(id, { kind: 'approved', albumId: 1, name: 'x', photoIds: ids.slice(0, 6) })
+  lib.proposals.report(id, { kind: 'edited', edited: true })
+  assert.deepEqual(await c.tool('proposal_status', { proposal_id: id }), { proposal_id: id, album_id: albumId, status: 'closed' })
+  await lib.access.turnOff()
+  await lib.access.turnOn()
+  const c2 = await client(lib)
+  assert.equal((await c2.tool('proposal_status', { proposal_id: id })).status, 'closed', 'expiry does not rewrite a decision')
   await lib.close()
 })

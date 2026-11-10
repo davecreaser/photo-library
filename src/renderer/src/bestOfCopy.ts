@@ -1,25 +1,6 @@
 // Words for Best of (spec 0006, Design). Pure, so the copy is tested without a window.
-import type { BestOfReason } from '../../shared/types.ts'
 
-/** Why a photo is in the pick, in plain words (AC-5). */
-export function reasonText(r: BestOfReason): string {
-  switch (r.kind) {
-    case 'starred':
-      return 'You starred this one'
-    case 'focus':
-      return `Matches “${r.phrase}”`
-    case 'person':
-      return `Includes ${r.name}`
-    case 'lookalike':
-      return `Sharpest of ${r.count} similar photos`
-    case 'moment':
-      return r.count > 1 ? `One of ${r.count} from this moment` : 'The one from this moment'
-    case 'different':
-      return 'Something different from the rest'
-    case 'yours':
-      return 'You chose this one'
-  }
-}
+export { reasonText } from '../../shared/bestOfReasons.ts'
 
 export const NOT_ENOUGH = 'Not enough photos to choose from.'
 export const MAKE_ALBUM_TOOLTIP = 'Creates a new album with these photos. Nothing is moved or changed on disk.'
@@ -37,4 +18,19 @@ export function madeNotice(name: string, count: number): string {
 
 export function subtitle(count: number, total: number, moments: number): string {
   return `${count.toLocaleString()} of ${total.toLocaleString()} photos · ${moments.toLocaleString()} ${moments === 1 ? 'moment' : 'moments'}`
+}
+
+// --- a proposal from an AI assistant (spec 0009, Design) ---
+
+export const ASSISTANT_PICK = 'Picked by your AI assistant'
+export const PROPOSAL_WAITING = 'Picked by your AI assistant for you to look over. Change anything you like; nothing is kept until you press Make album.'
+export const PROPOSAL_MADE = "Made from your AI assistant's pick. The album is yours; the assistant can't change it."
+export const PROPOSAL_ACCESS_OFF = "Assistant access is off, so your assistant won't hear what you decide. You can still make the album."
+export const PROPOSAL_LOADING = "Opening your AI assistant's pick…"
+export const PROPOSAL_FEWER_TOOLTIP = 'To show fewer, remove photos with ✕'
+export const PROPOSAL_FOCUS_HINT = "Your assistant's picks stay; press + to add photos that match."
+export const PROPOSAL_REPLACED = 'Your AI assistant sent a new pick.'
+
+export function incomingPrompt(name: string): string {
+  return `Your AI assistant sent a new pick of “${name}”. Leave without making an album?`
 }

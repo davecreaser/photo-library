@@ -36,6 +36,12 @@ const api: Api = {
     return () => ipcRenderer.removeListener('albums:changed', listener)
   },
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
+  onProposal: (cb) => {
+    const listener = (_e: unknown, p: Parameters<typeof cb>[0]) => cb(p)
+    ipcRenderer.on('proposal:show', listener)
+    return () => ipcRenderer.removeListener('proposal:show', listener)
+  },
+  reportProposal: (id, event) => ipcRenderer.send('proposal:report', id, event),
   getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),
   setSidebarSections: (s) => ipcRenderer.invoke('sidebar:set', s),
   getLibrary: () => ipcRenderer.invoke('library:get'),

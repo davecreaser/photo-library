@@ -31,6 +31,8 @@ export interface AccessOptions {
   makeTools: () => AssistantTools
   version: string
   onChange: (s: AssistantStatus) => void
+  /** Every connection was cut off (off, forget, quit): proposals expire (spec 0009, AC-11). */
+  onEnded?: () => void
   platform?: NodeJS.Platform
 }
 
@@ -197,6 +199,7 @@ export class AssistantAccess {
   turnOff(): Promise<AssistantStatus> {
     return this.serial(async () => {
       await this.stop()
+      this.o.onEnded?.()
       this.state = 'off'
       this.reason = null
       this.o.db.setSetting(SETTING, 'off')
@@ -219,6 +222,7 @@ export class AssistantAccess {
       if (this.state !== 'on' || !this.server) return this.status()
       this.token = await this.newToken()
       this.server.dropConnections()
+      this.o.onEnded?.()
       this.changed()
       return this.status()
     })
@@ -228,6 +232,7 @@ export class AssistantAccess {
   shutdown(): Promise<void> {
     return this.serial(async () => {
       await this.stop()
+      this.o.onEnded?.()
       this.state = 'off'
     })
   }

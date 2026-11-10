@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Album, Tag } from '../../../shared/types.ts'
 import { AlbumPicker } from './AlbumPicker.tsx'
+import { ExportDialog } from './ExportDialog.tsx'
 import { TagInput } from './TagInput.tsx'
 
 const api = window.api
@@ -17,6 +18,7 @@ interface Props {
 
 export function SelectionBar({ selected, albums, tags, currentAlbumId, onDone, onClear }: Props) {
   const [picking, setPicking] = useState(false)
+  const [saving, setSaving] = useState<number[] | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const flash = (text: string) => {
@@ -43,6 +45,10 @@ export function SelectionBar({ selected, albums, tags, currentAlbumId, onDone, o
           />
         )}
       </div>
+      <button onClick={() => setSaving(selected)} title="Saves JPEG copies of these photos in a new folder. Your photos are not touched.">
+        Save copies…
+      </button>
+      {saving && <ExportDialog source={{ photoIds: saving }} onClose={() => setSaving(null)} />}
       <TagInput
         tags={tags}
         placeholder="Tag selected…"

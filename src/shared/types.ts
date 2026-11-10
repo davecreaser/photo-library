@@ -218,7 +218,49 @@ export interface LibraryInfo {
   undatedCount: number
 }
 
+/** What a "Save copies" run is of: the selected photos, or an album (and the albums inside it). Never a path. */
+export type ExportSource = { photoIds: number[] } | { albumId: number }
+
+export interface ExportOptions {
+  /** Longest side in pixels; 0 keeps the original size. */
+  maxSide: 0 | 4000 | 2000 | 1600
+  /** Put the capture date and time in the file names. */
+  dateInNames: boolean
+}
+
+export interface ExportSummary {
+  /** Photos that will be saved. */
+  count: number
+  /** Photos left out because no copy is in the photo folder now. */
+  missing: number
+  options: ExportOptions
+}
+
+export interface ExportSkipped {
+  name: string
+  reason: string
+}
+
+export type ExportResult =
+  | { status: 'noFolder' }
+  | { status: 'refused'; reason: 'photoFolder' | 'appData' }
+  | { status: 'done' | 'cancelled' | 'error'; folderName: string; requested: number; saved: number; skipped: ExportSkipped[]; message?: string }
+
+export interface ExportProgress {
+  done: number
+  total: number
+}
+
 export interface Api {
+  /** Save copies as JPEGs (spec 0007). The destination is chosen in the main process, never passed in. */
+  exportSummary(source: ExportSource): Promise<ExportSummary>
+  /** Asks for a folder, then saves. Resolves when finished, stopped or refused. */
+  exportCopies(source: ExportSource, options: ExportOptions): Promise<ExportResult>
+  cancelExport(): Promise<void>
+  /** Shows the folder of the last export in Finder / Explorer. */
+  revealExport(): Promise<void>
+  onExportProgress(cb: (p: ExportProgress) => void): () => void
+
   /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */
   getSidebarSections(): Promise<SidebarSections>
   setSidebarSections(s: SidebarSections): Promise<void>

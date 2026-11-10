@@ -25,6 +25,7 @@ const READ_ONLY_FS = new Set([
   'statSync',
   'readFileSync',
   'readdirSync',
+  'realpathSync',
   'createReadStream'
 ])
 const FORBIDDEN = [
@@ -178,6 +179,49 @@ test('sips conversion works on a copy and leaves the original untouched', { skip
   assert.equal(fs.statSync(heic).mtimeMs, mtime0)
   assert.deepEqual(fs.readdirSync(heicDir), ['IMG_0002.HEIC'], 'nothing added next to the original')
   assert.deepEqual(fs.readdirSync(join(appData, 'tmp')), [], 'temp copies cleaned up')
+})
+
+// --- the export grant (ADR 0010) ---
+
+test('the export grant is narrow, per export, and never reaches a photo folder', async () => {
+  const { grantExportRoot, revokeExportRoot } = await import('../src/main/fsGuard.ts')
+  const dest = join(root, 'exports', 'Trip 2024-07-14')
+  // The user's own folder, made outside the guard like Finder would.
+  const asUser = (code: string) => execFileSync(process.execPath, ['-e', code])
+  asUser(`require('fs').mkdirSync(${JSON.stringify(join(root, 'exports'))})`)
+  // Refused: inside a photo folder, inside app data.
+  assert.throws(() => grantExportRoot(join(photos, 'trip', 'copies'), [appData]), ProtectedPathError)
+  assert.throws(() => grantExportRoot(join(appData, 'copies'), [appData]), ProtectedPathError)
+  // Refused: a link in the chosen folder that leads into a photo folder.
+  asUser(
+    `require('fs').symlinkSync(${JSON.stringify(photos)}, ${JSON.stringify(join(root, 'exports', 'link'))}, ${JSON.stringify(process.platform === 'win32' ? 'junction' : 'dir')})`
+  )
+  assert.throws(() => grantExportRoot(join(root, 'exports', 'link', 'copies'), [appData]), ProtectedPathError)
+
+  grantExportRoot(dest, [appData])
+  try {
+    assert.throws(() => grantExportRoot(join(root, 'exports', 'Second'), [appData]), ProtectedPathError, 'only one at a time')
+    fs.mkdirSync(dest)
+    fs.writeFileSync(join(dest, '0001.jpg'), 'copy')
+    // Writes elsewhere stay refused: the neighbour folder, the parent, `..`, a photo folder.
+    assert.throws(() => fs.writeFileSync(join(root, 'exports', 'other.jpg'), 'x'), ProtectedPathError)
+    assert.throws(() => fs.writeFileSync(join(dest, '..', 'other.jpg'), 'x'), ProtectedPathError)
+    assert.throws(() => fs.writeFileSync(join(dest, '..', '..', 'stray.jpg'), 'x'), ProtectedPathError)
+    assert.throws(() => fs.writeFileSync(join(photos, 'trip', 'IMG_0001.JPG'), 'x'), ProtectedPathError)
+    assert.throws(() => fs.writeFileSync(join(photos, 'new.jpg'), 'x'), ProtectedPathError)
+    assert.throws(() => fs.rmSync(photo), ProtectedPathError)
+    // A link inside the granted folder cannot lead the write into a photo folder or out of the grant.
+    fs.symlinkSync(photos, join(dest, 'to-photos'), process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(() => fs.writeFileSync(join(dest, 'to-photos', 'trip', 'IMG_0001.JPG'), 'x'), ProtectedPathError)
+    assert.throws(() => fs.writeFileSync(join(dest, 'to-photos', 'new.jpg'), 'x'), ProtectedPathError)
+    fs.symlinkSync(join(root, 'exports'), join(dest, 'to-parent'), process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(() => fs.writeFileSync(join(dest, 'to-parent', 'out.jpg'), 'x'), ProtectedPathError)
+  } finally {
+    revokeExportRoot()
+  }
+  // After the export ended, nothing is writable there any more.
+  assert.throws(() => fs.writeFileSync(join(dest, '0002.jpg'), 'late'), ProtectedPathError)
+  assert.throws(() => fs.mkdirSync(join(root, 'exports', 'again')), ProtectedPathError)
 })
 
 test('after all attacks the photo folder is exactly as it was', () => {

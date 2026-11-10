@@ -88,6 +88,28 @@ export interface GuardConfig {
 
 let config: GuardConfig | null = null
 
+// The one extra place an export may write (ADR 0010): the new folder the user picked for it.
+let exportRoot: string | null = null
+
+/**
+ * Allows writes into `dir` (a new folder the user just chose) until `revokeExportRoot()`.
+ * Refused if `dir` is inside a photo folder or any of `forbidden` (the app data folder), or if
+ * another export holds the grant. Photo folders still win in `assertWritable`.
+ */
+export function grantExportRoot(dir: string, forbidden: string[]): void {
+  if (!config) throw new ProtectedPathError('grant export', dir, 'the filesystem guard is not installed')
+  if (exportRoot) throw new ProtectedPathError('grant export', dir, 'another export is running')
+  const real = realTarget(dir)
+  if (config.protectedRoots().some((r) => isInside(realTarget(r), real)))
+    throw new ProtectedPathError('grant export', dir, 'it is inside a photo folder, which is read-only')
+  if (forbidden.some((r) => isInside(realTarget(r), real))) throw new ProtectedPathError('grant export', dir, "it is inside the app's own data folder")
+  exportRoot = dir
+}
+
+export function revokeExportRoot(): void {
+  exportRoot = null
+}
+
 /** Throws unless `target` may be written. Exported so writers outside Node's fs (SQLite, sips) can be checked too. */
 export function assertWritable(target: string, op = 'write'): void {
   if (!config) throw new ProtectedPathError(op, target, 'the filesystem guard is not installed')
@@ -95,6 +117,7 @@ export function assertWritable(target: string, op = 'write'): void {
   for (const root of config.protectedRoots()) {
     if (isInside(realTarget(root), real)) throw new ProtectedPathError(op, target, 'it is inside a photo folder, which is read-only')
   }
+  if (exportRoot && isInside(realTarget(exportRoot), real)) return
   if (!config.allowedRoots().some((root) => isInside(realTarget(root), real))) {
     throw new ProtectedPathError(op, target, "it is outside the app's own data folder")
   }

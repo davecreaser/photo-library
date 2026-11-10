@@ -1,8 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron'
 import { tmpdir } from 'node:os'
 import { extname, isAbsolute, join, relative, sep } from 'node:path'
+import { readdirSync, realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { assertWritable, installFsGuard } from './fsGuard.ts'
+import { openExport } from './appFiles.ts'
+import { planNames, runExport, safeFolderName, writeFailure } from './exporter.ts'
+import { exportOptionsFrom, EXPORT_OPTIONS_KEY } from './exportOptions.ts'
 import { LibraryDb, type Forgotten } from './db.ts'
 import { DEFAULT_IGNORED, normaliseRule } from './ignore.ts'
 import { BROWSER_NATIVE_EXTENSIONS, fileExists } from './photoFs.ts'
@@ -14,7 +18,7 @@ import { Analysis } from './analysis.ts'
 import { PhotoSearch } from './photoSearch.ts'
 import { ContentModelWorker } from './contentModelWorker.ts'
 import createContentWorker from './contentWorker.ts?nodeWorker'
-import type { ClockCorrection, LibraryInfo, PhotoFilter } from '../shared/types.ts'
+import type { ClockCorrection, ExportOptions, ExportResult, ExportSource, ExportSummary, LibraryInfo, PhotoFilter } from '../shared/types.ts'
 import { parseSidebarSections, type SidebarSections } from '../shared/sidebarSections.ts'
 
 // photo://thumb/<id> and photo://full/<id> serve images to the UI.
@@ -52,6 +56,108 @@ function overlapsAppData(folder: string): boolean {
     return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
   }
   return inside(folder, dataDir) || inside(dataDir, folder)
+}
+
+// --- save copies (spec 0007) ---
+
+let exporting: { cancel: boolean } | null = null
+let lastExportFolder: string | null = null
+
+function exportPhotoIds(source: ExportSource): number[] {
+  return 'albumId' in source ? db.albumPhotoIdsDeep(source.albumId) : [...new Set(source.photoIds.filter(Number.isInteger))]
+}
+
+function exportSummary(source: ExportSource): ExportSummary {
+  const ids = exportPhotoIds(source)
+  const count = db.exportSources(ids).length
+  return { count, missing: ids.length - count, options: exportOptionsFrom(db.getSetting(EXPORT_OPTIONS_KEY)) }
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** Is `folder` (really) inside one of `roots`? */
+function insideAny(folder: string, roots: string[]): boolean {
+  const real = (p: string) => {
+    try {
+      return realpathSync.native(p)
+    } catch {
+      return p
+    }
+  }
+  return roots.some((root) => {
+    const rel = relative(real(root), real(folder))
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  })
+}
+
+async function startExport(source: ExportSource, rawOptions: ExportOptions): Promise<ExportResult> {
+  if (exporting) throw new Error('Another export is running')
+  const state = { cancel: false }
+  exporting = state
+  try {
+    return await chooseAndExport(source, rawOptions, state)
+  } finally {
+    if (exporting === state) exporting = null
+  }
+}
+
+async function chooseAndExport(source: ExportSource, rawOptions: ExportOptions, state: { cancel: boolean }): Promise<ExportResult> {
+  const options = exportOptionsFrom(JSON.stringify(rawOptions))
+  db.setSetting(EXPORT_OPTIONS_KEY, JSON.stringify(options))
+  const photos = db.exportSources(exportPhotoIds(source))
+  if (photos.length === 0) return { status: 'noFolder' }
+  const result = await dialog.showOpenDialog(window!, {
+    title: 'Choose where to save the copies',
+    message: 'The copies go into a new folder inside the folder you choose.',
+    buttonLabel: 'Save here',
+    properties: ['openDirectory', 'createDirectory']
+  })
+  const chosen = result.filePaths[0]
+  if (result.canceled || !chosen) return { status: 'noFolder' }
+  if (insideAny(chosen, protectedRoots)) return { status: 'refused', reason: 'photoFolder' }
+  if (insideAny(chosen, [dataDir])) return { status: 'refused', reason: 'appData' }
+
+  // A new folder named after the album (or "Photos") and today's date; a number is added if it exists.
+  const today = new Date()
+  const stamp = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`
+  const album = 'albumId' in source ? db.listAlbums().find((a) => a.id === source.albumId) : undefined
+  const base = `${safeFolderName(album?.name ?? 'Photos')} ${stamp}`
+  const taken = new Set(readdirSync(chosen).map((n) => n.toLowerCase()))
+  let folderName = base
+  for (let n = 2; taken.has(folderName.toLowerCase()); n++) folderName = `${base} ${n}`
+  const folder = join(chosen, folderName)
+
+  const base0 = { folderName, requested: photos.length }
+  try {
+    const sink = await openExport(folder, dataDir)
+    lastExportFolder = folder
+    try {
+      const run = await runExport(
+        planNames(photos, options),
+        sink,
+        options,
+        join(dataDir, 'cache', 'tmp'),
+        (done, total) => window?.webContents.send('export:progress', { done, total }),
+        () => state.cancel
+      )
+      return { ...run, ...base0 }
+    } finally {
+      sink.close()
+    }
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code
+    const message =
+      code === 'ENOSPC'
+        ? 'the disk is full'
+        : code === 'EACCES' || code === 'EPERM'
+          ? "that folder can't be written to"
+          : e instanceof Error
+            ? e.message
+            : String(e)
+    return { status: 'error', ...base0, saved: 0, skipped: [], message }
+  } finally {
+    exporting = null
+  }
 }
 
 function libraryInfo(): LibraryInfo {
@@ -204,6 +310,15 @@ function registerIpc(): void {
     const forgotten = db.forgetMissing()
     organiser.invalidate()
     await cleanUpCaches(forgotten)
+  })
+
+  ipcMain.handle('export:summary', (_e, source: ExportSource) => exportSummary(source))
+  ipcMain.handle('export:start', (_e, source: ExportSource, options: ExportOptions) => startExport(source, options))
+  ipcMain.handle('export:cancel', () => {
+    if (exporting) exporting.cancel = true
+  })
+  ipcMain.handle('export:reveal', () => {
+    if (lastExportFolder) shell.showItemInFolder(lastExportFolder)
   })
 
   ipcMain.handle('photos:query', (_e, filter: PhotoFilter) =>

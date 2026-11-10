@@ -629,6 +629,38 @@ export class LibraryDb {
     return this.vectors.search(content.vector, content.minScore, where.join(' AND '), params).map((m) => m.id)
   }
 
+  /** Ids of the photos in an album and in the albums inside it (including missing ones). */
+  albumPhotoIdsDeep(albumId: number): number[] {
+    const rows = this.db
+      .prepare(
+        `WITH RECURSIVE tree(id) AS (SELECT id FROM albums WHERE id = ? UNION SELECT a.id FROM albums a JOIN tree t ON a.parent_id = t.id)
+         SELECT DISTINCT photo_id FROM album_photos WHERE album_id IN (SELECT id FROM tree)`
+      )
+      .all(albumId) as Row[]
+    return rows.map((r) => r.photo_id as number)
+  }
+
+  /** What an export needs of these photos; missing photos (no copy in the photo folder now) are left out. */
+  exportSources(
+    ids: number[]
+  ): { id: number; path: string; takenAt: string | null; width: number | null; height: number | null; orientation: number | null }[] {
+    if (ids.length === 0) return []
+    const rows = this.db
+      .prepare(
+        `SELECT p.id, p.taken_at, p.width, p.height, p.orientation, f.path FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE}
+         WHERE p.present = 1 AND p.id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(ids)) as Row[]
+    return rows.map((r) => ({
+      id: r.id as number,
+      path: r.path as string,
+      takenAt: (r.taken_at as string) ?? null,
+      width: (r.width as number) ?? null,
+      height: (r.height as number) ?? null,
+      orientation: (r.orientation as number) ?? null
+    }))
+  }
+
   /** Present photos with these ids, in the given order. */
   photosByIds(ids: number[]): Photo[] {
     if (ids.length === 0) return []

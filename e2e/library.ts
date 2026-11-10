@@ -81,7 +81,7 @@ export async function createEdgeLibrary(): Promise<Library> {
  * A plain-colour photo (no text, so it renders the same on every OS). Each file is a distinct
  * photo through its EXIF description; photos of one colour have identical pixels and scores.
  */
-async function colourPhoto(path: string, fill: string, date: string | null): Promise<void> {
+export async function colourPhoto(path: string, fill: string, date: string | null): Promise<void> {
   mkdirSync(dirname(path), { recursive: true })
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="${fill}"/></svg>`
   const exif = { IFD0: { ImageDescription: `test photo ${n++}` }, ...(date ? { IFD2: { DateTimeOriginal: date } } : {}) }
@@ -127,7 +127,7 @@ export interface TripLibrary extends Library {
 const TRIP_SHAPES = ['circle', 'rect', 'triangle', 'stripes', 'cross']
 
 /** One generated scene: `scene` picks colours and shapes, `jitter` shifts the foreground a few pixels (same scene, another shot). */
-async function scenePhoto(path: string, scene: number, jitter: number, date: string, description: string): Promise<void> {
+export async function scenePhoto(path: string, scene: number, jitter: number, date: string, description: string): Promise<void> {
   const hue = (scene * 67) % 360
   const shape = TRIP_SHAPES[scene % TRIP_SHAPES.length]
   const size = 40 + ((scene * 13) % 50)

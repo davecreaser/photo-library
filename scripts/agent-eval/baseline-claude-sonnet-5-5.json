@@ -1,0 +1,101 @@
+{
+  "date": "2026-11-10",
+  "model": "claude-sonnet-5-5",
+  "cliVersion": "2.1.322",
+  "appCommit": "14532f8-dirty",
+  "authMode": "login",
+  "toolsHash": "774722d4f4edd339426156aa674c1a2e50b62f820621575193c7584694f437d8",
+  "runsPerTask": 3,
+  "tasks": {
+    "trip": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 34633,
+      "output": 456,
+      "cost": 0.034436
+    },
+    "people-date-place": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 30054,
+      "output": 491,
+      "cost": 0.0247896
+    },
+    "content": {
+      "passes": 0,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 2,
+      "input": 22532,
+      "output": 342,
+      "cost": 0.021229599999999998
+    },
+    "last-visit": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 24063,
+      "output": 375,
+      "cost": 0.0248746
+    },
+    "whole-year": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 5,
+      "input": 87650,
+      "output": 1885,
+      "cost": 0.1279296
+    },
+    "owners-album": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 2,
+      "input": 23623,
+      "output": 599,
+      "cost": 0.0301472
+    },
+    "fix-own-album": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 4,
+      "input": 31552,
+      "output": 367,
+      "cost": 0.0266604
+    },
+    "best-of-approve": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 30998,
+      "output": 518,
+      "cost": 0.027145
+    },
+    "best-of-reject": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 5,
+      "input": 66653,
+      "output": 972,
+      "cost": 0.060338800000000005
+    },
+    "nothing-there": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 4,
+      "input": 21953,
+      "output": 571,
+      "cost": 0.0225746
+    }
+  }
+}

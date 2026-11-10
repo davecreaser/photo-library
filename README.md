@@ -49,6 +49,24 @@ Claude, or any MCP client, can search the library and make albums of its own (sp
 3. Ask for the best photos of an album or a year: the assistant uses the app's Best of (it can see sharpness and look-alikes; the assistant can't) and opens its pick in Photo Library for you to adjust and keep with **Make album** (spec 0009). Nothing is kept until you do.
 4. Keep Photo Library open while the assistant works. Needs Node.js 22.18 or later. Turning the switch off, or **Forget connected assistants**, cuts assistants off at once.
 
+### Measuring how well assistants use the tools (evals)
+
+`scripts/agent-eval/` (spec 0010) runs ten fixed requests ("make an album of the Norway trip", "pick the best 12 of Sintra for me to look over", …) through Claude Code headless against the built app, and grades what ends up in the library, not what Claude says. Use it to see whether a change to a tool's description or result made Claude better or worse.
+
+```sh
+npm run build
+node scripts/agent-eval/run.ts --dry-run                 # the tasks and the worst-case cost; no model, no network
+node scripts/agent-eval/run.ts                           # 10 tasks × 3 runs, default model claude-sonnet-5-5
+node scripts/agent-eval/run.ts --task trip --runs 5      # one task, more runs
+node scripts/agent-eval/run.ts --save-baseline           # record the numbers to compare later changes with
+node --test "scripts/agent-eval/*.test.ts"               # the graders and report, without a model
+```
+
+- **By hand only, never in CI.** It uses the network and costs money: each run is capped (30 turns, $1), and a whole eval above `--budget` ($15) needs `--yes`. With `ANTHROPIC_API_KEY` set it runs isolated with `--bare`; otherwise it uses your Claude login with your settings left out.
+- **Generated photos only.** The first run builds a generated library (about 570 images, placeholder people "Alex" and "Sam") and its app data in `~/.cache/photo-library-eval/agent/`, once per app version. Every run works on a throwaway copy; the photo folder is checked before and after each run, and the eval stops if anything in it changed. Never point it at a real library: it refuses a folder it didn't generate, and the app's real data folder.
+- **What leaves the computer:** the prompts and the generated library's tool results go to the model provider while the eval runs. Transcripts and reports stay in the cache; the only committed output is `baseline-<model>.json`, numbers only.
+- **Reading the results:** a difference of one run in three is noise; use `--runs 5` before deciding. For the Best of tasks, "would approve unchanged" is a proxy (the size asked for, no near-duplicates, everyone in it, overlap with the app's own pick): generated photos can't tell whether you'd like them.
+
 ## Where data lives
 
 `~/Library/Application Support/photo-library/`:

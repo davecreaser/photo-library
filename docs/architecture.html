@@ -1,0 +1,1702 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Photo Library Architecture</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+    />
+    <style>
+      /* Layout: one reading column (~68ch) on a light-table ground; diagrams break out wider; film rebate marks the photo's journey. */
+      :root {
+        --paper: #eff1ec;
+        --sheet: #f9faf7;
+        --ink: #15191b;
+        --muted: #576059;
+        --rule: #d3d8d1;
+        --fuji: #0d7449;
+        --fuji-soft: #d9eee2;
+        --amber: #a85f00;
+        --amber-soft: #f5e6cd;
+        --sky: #285a99;
+        --sky-soft: #dce6f3;
+        --film: #22272a;
+        --film-mark: #e9b84a;
+        --display: 'IBM Plex Sans Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+        --body: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --paper: #111412;
+          --sheet: #191d1a;
+          --ink: #e6ebe6;
+          --muted: #9aa59d;
+          --rule: #2b322d;
+          --fuji: #4cc48d;
+          --fuji-soft: #17301f;
+          --amber: #e3a24b;
+          --amber-soft: #36290f;
+          --sky: #86ade6;
+          --sky-soft: #172436;
+          --film: #050606;
+          --film-mark: #e9b84a;
+          color-scheme: dark;
+        }
+      }
+      :root[data-theme='dark'] {
+        --paper: #111412;
+        --sheet: #191d1a;
+        --ink: #e6ebe6;
+        --muted: #9aa59d;
+        --rule: #2b322d;
+        --fuji: #4cc48d;
+        --fuji-soft: #17301f;
+        --amber: #e3a24b;
+        --amber-soft: #36290f;
+        --sky: #86ade6;
+        --sky-soft: #172436;
+        --film: #050606;
+        --film-mark: #e9b84a;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--paper);
+        color: var(--ink);
+        font: 400 1rem/1.62 var(--body);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+      }
+      .prose {
+        max-width: 68ch;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: var(--display);
+        text-wrap: balance;
+        margin: 0;
+        line-height: 1.08;
+      }
+      h2 {
+        font-size: clamp(1.75rem, 3.6vw, 2.4rem);
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      h3 {
+        font-size: 1.2rem;
+        font-weight: 600;
+      }
+      p {
+        margin: 0;
+      }
+      code,
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.86em;
+      }
+      code {
+        background: var(--sheet);
+        border: 1px solid var(--rule);
+        border-radius: 4px;
+        padding: 0.05em 0.35em;
+      }
+      a {
+        color: var(--fuji);
+      }
+      a:focus-visible,
+      button:focus-visible {
+        outline: 2px solid var(--fuji);
+        outline-offset: 2px;
+      }
+      .eyebrow {
+        font: 500 0.74rem/1 var(--mono);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--fuji);
+      }
+      .lede {
+        font-size: 1.12rem;
+        color: var(--ink);
+      }
+      .muted {
+        color: var(--muted);
+      }
+
+      /* ---------- film rebate (signature) ---------- */
+      .rebate {
+        background: var(--film);
+        color: var(--film-mark);
+        font: 500 0.72rem/1 var(--mono);
+        letter-spacing: 0.18em;
+        position: relative;
+        overflow: hidden;
+      }
+      .rebate::before,
+      .rebate::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 7px;
+        background: repeating-linear-gradient(90deg, transparent 0 9px, var(--paper) 9px 19px, transparent 19px 28px);
+        opacity: 0.85;
+      }
+      .rebate::before {
+        top: 5px;
+      }
+      .rebate::after {
+        bottom: 5px;
+      }
+      .rebate .wrap {
+        display: flex;
+        gap: 2.4rem;
+        padding-block: 21px;
+        white-space: nowrap;
+      }
+      .rebate span:nth-child(odd) {
+        color: #f2d48a;
+      }
+
+      /* ---------- hero ---------- */
+      header.hero {
+        padding-block: clamp(2.5rem, 7vw, 5rem) 2.5rem;
+      }
+      .hero h1 {
+        font-size: clamp(2.6rem, 7.4vw, 5.2rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        max-width: 14ch;
+      }
+      .hero h1 em {
+        font-style: normal;
+        color: var(--fuji);
+      }
+      .hero .lede {
+        margin-top: 1.4rem;
+        max-width: 58ch;
+      }
+      .hero .meta {
+        margin-top: 1.1rem;
+        font: 400 0.82rem/1.5 var(--mono);
+        color: var(--muted);
+      }
+
+      .contact {
+        margin-top: 2.6rem;
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 0;
+        background: var(--film);
+        padding: 18px 10px;
+        border-radius: 3px;
+      }
+      .frame {
+        border: 1px solid #3a4145;
+        margin: 0 4px;
+        padding: 0.9rem 0.8rem 0.75rem;
+        background: #2b3134;
+        color: #eef1ee;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        min-width: 0;
+      }
+      .frame b {
+        font: 700 clamp(1.4rem, 3vw, 2rem)/1 var(--display);
+        font-variant-numeric: tabular-nums;
+      }
+      .frame span {
+        font: 400 0.76rem/1.35 var(--body);
+        color: #c3cbc6;
+      }
+      .frame i {
+        font: 500 0.62rem/1 var(--mono);
+        color: var(--film-mark);
+        font-style: normal;
+        letter-spacing: 0.12em;
+      }
+      @media (max-width: 760px) {
+        .contact {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          row-gap: 8px;
+        }
+      }
+      @media (max-width: 420px) {
+        .contact {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      /* ---------- sections ---------- */
+      section {
+        padding-block: clamp(3rem, 7vw, 4.75rem);
+        border-top: 1px solid var(--rule);
+      }
+      .head {
+        display: grid;
+        gap: 0.7rem;
+        margin-bottom: 1.6rem;
+      }
+      .stack {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .figure {
+        margin-top: 2rem;
+        background: var(--sheet);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: clamp(0.75rem, 2vw, 1.4rem);
+      }
+      .figure figcaption {
+        margin-top: 0.8rem;
+        font-size: 0.86rem;
+        color: var(--muted);
+        max-width: 80ch;
+      }
+      .scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .scroll svg {
+        display: block;
+        min-width: 720px;
+        width: 100%;
+        height: auto;
+      }
+
+      /* svg styling through tokens */
+      svg text {
+        font-family: var(--body);
+        fill: var(--ink);
+      }
+      svg .t-title {
+        font: 600 15px var(--display);
+      }
+      svg .t-small {
+        font-size: 12px;
+        fill: var(--muted);
+      }
+      svg .t-mono {
+        font: 500 11.5px var(--mono);
+      }
+      svg .t-label {
+        font: 500 11px var(--mono);
+        fill: var(--muted);
+        letter-spacing: 0.06em;
+      }
+      svg .box {
+        fill: var(--sheet);
+        stroke: var(--ink);
+        stroke-width: 1.3;
+      }
+      svg .box-soft {
+        fill: var(--paper);
+        stroke: var(--rule);
+        stroke-width: 1;
+      }
+      svg .box-fuji {
+        fill: var(--fuji-soft);
+        stroke: var(--fuji);
+        stroke-width: 1.3;
+      }
+      svg .box-amber {
+        fill: var(--amber-soft);
+        stroke: var(--amber);
+        stroke-width: 1.5;
+      }
+      svg .box-sky {
+        fill: var(--sky-soft);
+        stroke: var(--sky);
+        stroke-width: 1.3;
+      }
+      svg .boundary {
+        fill: none;
+        stroke: var(--muted);
+        stroke-width: 1.2;
+        stroke-dasharray: 6 5;
+      }
+      svg .chip {
+        fill: var(--paper);
+        stroke: var(--rule);
+        stroke-width: 1;
+      }
+      svg .line {
+        stroke: var(--ink);
+        stroke-width: 1.4;
+        fill: none;
+      }
+      svg .line-fuji {
+        stroke: var(--fuji);
+        stroke-width: 1.8;
+        fill: none;
+      }
+      svg .line-amber {
+        stroke: var(--amber);
+        stroke-width: 1.8;
+        fill: none;
+        stroke-dasharray: 5 4;
+      }
+      svg .line-sky {
+        stroke: var(--sky);
+        stroke-width: 1.8;
+        fill: none;
+      }
+      svg .lane {
+        stroke: var(--rule);
+        stroke-width: 1.2;
+        stroke-dasharray: 3 4;
+      }
+      svg .fill-ink {
+        fill: var(--ink);
+      }
+      svg .fill-fuji {
+        fill: var(--fuji);
+      }
+      svg .fill-amber {
+        fill: var(--amber);
+      }
+      svg .fill-sky {
+        fill: var(--sky);
+      }
+      svg .txt-fuji {
+        fill: var(--fuji);
+      }
+      svg .txt-amber {
+        fill: var(--amber);
+      }
+      svg .txt-sky {
+        fill: var(--sky);
+      }
+
+      /* ---------- safety layers ---------- */
+      .layers {
+        margin-top: 2rem;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 2rem;
+        align-items: start;
+      }
+      @media (max-width: 820px) {
+        .layers {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .ring {
+        border: 1.5px solid var(--amber);
+        border-radius: 14px;
+        padding: 0.55rem 0.7rem 0.7rem;
+        background: var(--sheet);
+      }
+      .ring > .ring {
+        margin-top: 0.45rem;
+      }
+      .ring:nth-child(n) {
+        background: color-mix(in srgb, var(--amber-soft) 35%, var(--sheet));
+      }
+      .ring .rl {
+        font: 500 0.7rem/1.3 var(--mono);
+        letter-spacing: 0.06em;
+        color: var(--amber);
+        display: block;
+      }
+      .core {
+        margin-top: 0.5rem;
+        border-radius: 9px;
+        background: var(--film);
+        color: #f2f4f1;
+        text-align: center;
+        padding: 1.25rem 0.75rem;
+        font: 600 1.05rem/1.2 var(--display);
+      }
+      .core small {
+        display: block;
+        font: 400 0.75rem/1.4 var(--mono);
+        color: #c3cbc6;
+        margin-top: 0.3rem;
+      }
+      ol.layerlist {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 1rem;
+        counter-reset: l;
+      }
+      ol.layerlist li {
+        display: grid;
+        grid-template-columns: 2.2rem minmax(0, 1fr);
+        gap: 0.4rem 0.8rem;
+      }
+      ol.layerlist li::before {
+        counter-increment: l;
+        content: counter(l);
+        grid-row: span 2;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 50%;
+        border: 1.5px solid var(--amber);
+        color: var(--amber);
+        font: 600 0.95rem/1.9rem var(--display);
+        text-align: center;
+      }
+      ol.layerlist b {
+        font-weight: 600;
+      }
+      ol.layerlist p {
+        font-size: 0.93rem;
+        color: var(--muted);
+      }
+
+      /* ---------- photo journey ---------- */
+      .journey {
+        margin-top: 2rem;
+        display: grid;
+        gap: 0;
+        position: relative;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 74px minmax(0, 1fr);
+        background: var(--sheet);
+        border: 1px solid var(--rule);
+        border-top: none;
+      }
+      .step:first-child {
+        border-top: 1px solid var(--rule);
+        border-radius: 6px 6px 0 0;
+      }
+      .step:last-child {
+        border-radius: 0 0 6px 6px;
+      }
+      .step .no {
+        background: var(--film);
+        color: var(--film-mark);
+        position: relative;
+        font: 600 1.55rem/1 var(--display);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 1.15rem;
+        font-variant-numeric: tabular-nums;
+      }
+      .step .no::before,
+      .step .no::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 7px;
+        background: repeating-linear-gradient(180deg, transparent 0 7px, var(--paper) 7px 15px, transparent 15px 22px);
+        opacity: 0.8;
+      }
+      .step .no::before {
+        left: 6px;
+      }
+      .step .no::after {
+        right: 6px;
+      }
+      .step .no small {
+        position: absolute;
+        bottom: 10px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font: 500 0.58rem/1 var(--mono);
+        letter-spacing: 0.12em;
+        color: #8f989c;
+      }
+      .step .body {
+        padding: 1.1rem clamp(0.9rem, 2.5vw, 1.5rem) 1.2rem;
+        display: grid;
+        gap: 0.5rem;
+        min-width: 0;
+      }
+      .step h3 {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem 0.75rem;
+        align-items: baseline;
+      }
+      .step h3 .files {
+        font: 400 0.76rem/1.3 var(--mono);
+        color: var(--muted);
+      }
+      .step p {
+        font-size: 0.95rem;
+        max-width: 72ch;
+      }
+      .facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-top: 0.15rem;
+      }
+      .fact {
+        font: 500 0.74rem/1 var(--mono);
+        padding: 0.38rem 0.55rem;
+        border-radius: 3px;
+        background: var(--fuji-soft);
+        color: var(--fuji);
+        white-space: nowrap;
+      }
+      .fact.amber {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+      .fact.sky {
+        background: var(--sky-soft);
+        color: var(--sky);
+      }
+
+      /* ---------- two-column notes ---------- */
+      .notes {
+        margin-top: 1.8rem;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1.6rem;
+      }
+      @media (max-width: 820px) {
+        .notes {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .note {
+        display: grid;
+        gap: 0.4rem;
+        align-content: start;
+        border-top: 2px solid var(--ink);
+        padding-top: 0.8rem;
+      }
+      .note h3 {
+        font-size: 1.05rem;
+      }
+      .note p {
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+
+      /* ---------- tools list ---------- */
+      .tools {
+        margin-top: 1.6rem;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.6rem;
+      }
+      @media (max-width: 820px) {
+        .tools {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .tool {
+        background: var(--sheet);
+        border: 1px solid var(--rule);
+        border-radius: 5px;
+        padding: 0.7rem 0.8rem;
+        display: grid;
+        gap: 0.25rem;
+        min-width: 0;
+      }
+      .tool code {
+        background: none;
+        border: none;
+        padding: 0;
+        font-weight: 500;
+        color: var(--sky);
+        font-size: 0.8rem;
+        overflow-wrap: anywhere;
+      }
+      .tool span {
+        font-size: 0.83rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .tool.writes code {
+        color: var(--fuji);
+      }
+
+      /* ---------- eval table ---------- */
+      .evals {
+        margin-top: 1.8rem;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+        min-width: 620px;
+      }
+      .evals th {
+        text-align: left;
+        font: 500 0.7rem/1 var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 0 0.75rem 0.7rem 0;
+        border-bottom: 1.5px solid var(--ink);
+      }
+      .evals td {
+        padding: 0.62rem 0.75rem 0.62rem 0;
+        border-bottom: 1px solid var(--rule);
+        vertical-align: top;
+      }
+      .evals td.num {
+        font-family: var(--mono);
+        font-size: 0.82rem;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .evals td:first-child {
+        font-family: var(--mono);
+        font-size: 0.82rem;
+        white-space: nowrap;
+      }
+      .dots {
+        display: inline-flex;
+        gap: 4px;
+      }
+      .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        border: 1.5px solid var(--fuji);
+        background: var(--fuji);
+      }
+      .dot.no {
+        background: transparent;
+        border-color: var(--amber);
+      }
+      tr.failrow td {
+        background: color-mix(in srgb, var(--amber-soft) 55%, transparent);
+      }
+      .totals {
+        margin-top: 1rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.6rem;
+        font: 400 0.84rem/1.4 var(--mono);
+        color: var(--muted);
+      }
+      .totals b {
+        color: var(--ink);
+        font-weight: 500;
+      }
+
+      /* ---------- ADRs ---------- */
+      .adrs {
+        margin-top: 1.8rem;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 2.2rem;
+      }
+      @media (max-width: 760px) {
+        .adrs {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .adr {
+        display: grid;
+        grid-template-columns: 3.2rem minmax(0, 1fr);
+        gap: 0.8rem;
+        padding: 0.85rem 0;
+        border-bottom: 1px solid var(--rule);
+      }
+      .adr .n {
+        font: 500 0.8rem/1.6 var(--mono);
+        color: var(--fuji);
+      }
+      .adr b {
+        display: block;
+        font-weight: 600;
+        font-size: 0.95rem;
+        line-height: 1.35;
+      }
+      .adr span {
+        font-size: 0.86rem;
+        color: var(--muted);
+        line-height: 1.45;
+        display: block;
+        margin-top: 0.2rem;
+      }
+
+      /* ---------- pipeline ---------- */
+      .pipeline {
+        margin-top: 1.8rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: stretch;
+      }
+      .stage {
+        flex: 1 1 120px;
+        min-width: 0;
+        background: var(--sheet);
+        border: 1px solid var(--rule);
+        border-radius: 5px;
+        padding: 0.75rem 0.8rem;
+        display: grid;
+        gap: 0.3rem;
+        align-content: start;
+        position: relative;
+      }
+      .stage b {
+        font: 600 1rem/1.15 var(--display);
+      }
+      .stage span {
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .stage .who {
+        font: 500 0.66rem/1 var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--sky);
+      }
+      .stage.owner {
+        border-color: var(--fuji);
+        background: var(--fuji-soft);
+      }
+      .stage.owner .who {
+        color: var(--fuji);
+      }
+
+      footer {
+        border-top: 1px solid var(--rule);
+        padding-block: 2rem 3rem;
+        font: 400 0.8rem/1.6 var(--mono);
+        color: var(--muted);
+      }
+      footer .wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 2rem;
+        justify-content: space-between;
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .contact .frame {
+          animation: develop 0.9s ease-out both;
+        }
+        .contact .frame:nth-child(2) {
+          animation-delay: 0.08s;
+        }
+        .contact .frame:nth-child(3) {
+          animation-delay: 0.16s;
+        }
+        .contact .frame:nth-child(4) {
+          animation-delay: 0.24s;
+        }
+        .contact .frame:nth-child(5) {
+          animation-delay: 0.32s;
+        }
+        .contact .frame:nth-child(6) {
+          animation-delay: 0.4s;
+        }
+        @keyframes develop {
+          from {
+            filter: brightness(0.45) sepia(0.6);
+          }
+          to {
+            filter: none;
+          }
+        }
+      }
+    </style>
+    <style>
+      body {
+        margin: 0;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="rebate" aria-hidden="true">
+      <div class="wrap">
+        <span>PHOTO LIBRARY</span><span>▸ 1</span><span>READ-ONLY</span><span>▸ 1A</span><span>LOCAL ONLY</span><span>▸ 2</span
+        ><span>ELECTRON · NODE · SQLITE</span><span>▸ 2A</span><span>SAFETY FILM</span>
+      </div>
+    </div>
+
+    <header class="hero">
+      <div class="wrap">
+        <p class="eyebrow">Architecture walkthrough</p>
+        <h1>How Photo Library organises photos it <em>never touches</em></h1>
+        <p class="lede">
+          Photo Library is a desktop app that turns a folder of camera photos into albums, trips, people and a searchable library. It reads that folder and
+          never writes to it. Everything it learns lives in its own database, and nothing leaves the computer unless the owner turns on assistant access.
+        </p>
+        <p class="meta">Electron · React 19 · TypeScript · node:sqlite + sqlite-vec · onnxruntime (SigLIP, YuNet, SFace) · sharp · MCP</p>
+
+        <div class="contact" role="list" aria-label="The project in numbers">
+          <div class="frame" role="listitem"><i>01</i><b>0</b><span>writes to the photo folder, enforced in 5 layers</span></div>
+          <div class="frame" role="listitem"><i>02</i><b>0</b><span>network calls at runtime</span></div>
+          <div class="frame" role="listitem"><i>03</i><b>11</b><span>decision records (ADRs)</span></div>
+          <div class="frame" role="listitem"><i>04</i><b>10</b><span>specs with acceptance criteria</span></div>
+          <div class="frame" role="listitem"><i>05</i><b>262</b><span>tests: 217 unit and integration, 45 end-to-end</span></div>
+          <div class="frame" role="listitem"><i>06</i><b>8</b><span>MCP tools for AI assistants</span></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ============ PROCESSES ============ -->
+    <section id="processes">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">The shape of the app</p>
+          <h2>Three processes and a thread, with one folder fenced off</h2>
+          <p>
+            Electron splits the app in two. The <b>renderer</b> is the window: React, sandboxed, with context isolation, so it can only call the 67 functions
+            the preload script exposes as <code>window.api</code>. The <b>main process</b> is Node, and it does the real work: scanning, the database, analysis,
+            search and the assistant server. The heavy content model runs on its own <b>worker thread</b>, because onnxruntime blocks the thread it runs on and
+            the main thread also drives the window.
+          </p>
+        </div>
+
+        <figure class="figure">
+          <div class="scroll">
+            <svg viewBox="0 0 1000 610" role="img" aria-labelledby="proc-t proc-d">
+              <title id="proc-t">Process diagram</title>
+              <desc id="proc-d">
+                The window talks to the main process through the preload API. The main process reads the photo folder, writes only to the app data folder, runs
+                the content model on a worker thread, and serves assistants through a relay over a local socket.
+              </desc>
+              <defs>
+                <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-ink" />
+                </marker>
+                <marker id="ar-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-fuji" />
+                </marker>
+                <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-amber" />
+                </marker>
+                <marker id="ar-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-sky" />
+                </marker>
+              </defs>
+
+              <rect class="boundary" x="12" y="28" width="768" height="568" rx="10" />
+              <text class="t-label" x="28" y="20">THIS COMPUTER</text>
+
+              <!-- renderer -->
+              <rect class="box" x="40" y="58" width="300" height="112" rx="6" />
+              <text class="t-title" x="58" y="86">Window (renderer)</text>
+              <text class="t-small" x="58" y="110">React 19 · sandbox · context isolation</text>
+              <text class="t-small" x="58" y="130">Grid, viewer, People, Best of, dialogs</text>
+              <text class="t-small" x="58" y="150">Images via the photo:// protocol</text>
+
+              <!-- preload -->
+              <rect class="box-soft" x="40" y="190" width="300" height="40" rx="5" />
+              <text class="t-mono" x="58" y="215">preload · window.api · 67 IPC calls</text>
+              <path class="line" d="M190 170 V188" marker-end="url(#ar)" marker-start="url(#ar)" />
+              <path class="line" d="M190 230 V256" marker-end="url(#ar)" marker-start="url(#ar)" />
+
+              <!-- photo folder -->
+              <rect class="box-amber" x="384" y="58" width="236" height="112" rx="6" />
+              <text class="t-title" x="402" y="86">Photo folder</text>
+              <text class="t-small" x="402" y="110">The owner's camera photos</text>
+              <text class="t-small txt-amber" x="402" y="130">Read only. Never written, moved,</text>
+              <text class="t-small txt-amber" x="402" y="148">renamed or deleted (ADR 0001)</text>
+              <path class="line-amber" d="M470 258 V174" marker-end="url(#ar-a)" />
+              <text class="t-label txt-amber" x="480" y="222">READ</text>
+
+              <!-- main process -->
+              <rect class="box" x="40" y="260" width="472" height="310" rx="6" />
+              <text class="t-title" x="58" y="288">Main process (Node)</text>
+              <rect class="box-amber" x="56" y="302" width="440" height="32" rx="4" />
+              <text class="t-mono txt-amber" x="70" y="323">fsGuard · every fs write checked, process-wide</text>
+
+              <g>
+                <rect class="chip" x="56" y="348" width="104" height="30" rx="4" />
+                <text class="t-mono" x="66" y="368">db</text>
+                <rect class="chip" x="168" y="348" width="104" height="30" rx="4" />
+                <text class="t-mono" x="178" y="368">scanner</text>
+                <rect class="chip" x="280" y="348" width="104" height="30" rx="4" />
+                <text class="t-mono" x="290" y="368">analysis</text>
+                <rect class="chip" x="392" y="348" width="104" height="30" rx="4" />
+                <text class="t-mono" x="402" y="368">organiser</text>
+
+                <rect class="chip" x="56" y="386" width="104" height="30" rx="4" />
+                <text class="t-mono" x="66" y="406">photoSearch</text>
+                <rect class="chip" x="168" y="386" width="104" height="30" rx="4" />
+                <text class="t-mono" x="178" y="406">bestOf</text>
+                <rect class="chip" x="280" y="386" width="104" height="30" rx="4" />
+                <text class="t-mono" x="290" y="406">people</text>
+                <rect class="chip" x="392" y="386" width="104" height="30" rx="4" />
+                <text class="t-mono" x="402" y="406">faces</text>
+
+                <rect class="chip" x="56" y="424" width="104" height="30" rx="4" />
+                <text class="t-mono" x="66" y="444">thumbnails</text>
+                <rect class="chip" x="168" y="424" width="104" height="30" rx="4" />
+                <text class="t-mono" x="178" y="444">exporter</text>
+                <rect class="chip" x="280" y="424" width="104" height="30" rx="4" />
+                <text class="t-mono" x="290" y="444">photoFs</text>
+                <rect class="chip" x="392" y="424" width="104" height="30" rx="4" />
+                <text class="t-mono" x="402" y="444">appFiles</text>
+
+                <rect class="box-sky" x="56" y="462" width="216" height="30" rx="4" />
+                <text class="t-mono txt-sky" x="66" y="482">assistantServer</text>
+                <rect class="box-sky" x="280" y="462" width="216" height="30" rx="4" />
+                <text class="t-mono txt-sky" x="290" y="482">assistantTools · proposals</text>
+              </g>
+              <text class="t-small" x="58" y="520">photoFs is the only module that reads photo folders;</text>
+              <text class="t-small" x="58" y="538">appFiles is the only one that writes, and only to app data.</text>
+              <text class="t-small" x="58" y="556">LibraryDb wraps node:sqlite with the sqlite-vec extension.</text>
+
+              <!-- worker -->
+              <rect class="box" x="548" y="260" width="210" height="104" rx="6" />
+              <text class="t-title" x="564" y="286">Content worker thread</text>
+              <text class="t-small" x="564" y="310">SigLIP image + text encoders</text>
+              <text class="t-small" x="564" y="328">onnxruntime, ~60 ms a photo</text>
+              <text class="t-small txt-amber" x="564" y="348">Own guard: writes nothing</text>
+              <path class="line" d="M514 312 H546" marker-end="url(#ar)" marker-start="url(#ar)" />
+
+              <!-- app data -->
+              <rect class="box-fuji" x="548" y="384" width="210" height="100" rx="6" />
+              <text class="t-title" x="564" y="410">App data folder</text>
+              <text class="t-small" x="564" y="434">library.db (albums, faces, vectors)</text>
+              <text class="t-small" x="564" y="452">thumbnails · previews · face crops</text>
+              <text class="t-small txt-fuji" x="564" y="472">The only place anything is written</text>
+              <path class="line-fuji" d="M514 432 H546" marker-end="url(#ar-f)" />
+
+              <!-- relay -->
+              <rect class="box-sky" x="548" y="504" width="210" height="66" rx="6" />
+              <text class="t-title" x="564" y="530">relay.js</text>
+              <text class="t-small" x="564" y="552">stdio ↔ local socket, token first</text>
+              <path class="line-sky" d="M546 522 H514" marker-end="url(#ar-s)" />
+              <text class="t-label txt-sky" x="520" y="512">SOCKET</text>
+
+              <!-- assistant -->
+              <rect class="box-sky" x="808" y="468" width="180" height="128" rx="6" />
+              <text class="t-title" x="824" y="494">AI assistant</text>
+              <text class="t-small" x="824" y="518">Claude Desktop or</text>
+              <text class="t-small" x="824" y="536">Claude Code launches</text>
+              <text class="t-small" x="824" y="554">the relay. The model</text>
+              <text class="t-small" x="824" y="572">sees text, never pixels.</text>
+              <path class="line-sky" d="M806 537 H760" marker-end="url(#ar-s)" marker-start="url(#ar-s)" />
+              <text class="t-label txt-sky" x="768" y="528">MCP</text>
+            </svg>
+          </div>
+          <figcaption>
+            Amber is the photo folder and everything that protects it. Green is where the app may write. Blue is the opt-in path for AI assistants. There is no
+            TCP port anywhere: the assistant server listens on a Unix socket, or a named pipe on Windows, that only the owner's account can open.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ============ SAFETY ============ -->
+    <section id="safety">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">The one rule</p>
+          <h2>Five layers between the code and the photos</h2>
+          <p>
+            People trust a photo app with their only copy of ten years of photos. So "never write to the photo folder" isn't left to code review: it is enforced
+            in five independent layers, and any one of them would stop a write on its own.
+          </p>
+        </div>
+
+        <div class="layers">
+          <div aria-hidden="true">
+            <div class="ring">
+              <span class="rl">5 · overlapping folders refused</span>
+              <div class="ring">
+                <span class="rl">4 · database path asserted writable</span>
+                <div class="ring">
+                  <span class="rl">3 · safety test audits the source</span>
+                  <div class="ring">
+                    <span class="rl">2 · appFiles is the only writer</span>
+                    <div class="ring">
+                      <span class="rl">1 · fsGuard wraps every fs write</span>
+                      <div class="core">Photo folder<small>every folder ever chosen stays protected</small></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <ol class="layerlist">
+            <li>
+              <b>A guard on the file system itself</b>
+              <p>
+                <code>fsGuard.ts</code> is installed first thing at startup. It wraps every Node function that can create, change, move or delete a file, for
+                our code and every dependency. A write must be inside app data or temp and outside every photo folder ever chosen, and the protected rule wins.
+                It fails closed. The content worker thread installs it with no writable folders at all.
+              </p>
+            </li>
+            <li>
+              <b>One module that writes</b>
+              <p>
+                <code>appFiles.ts</code> is the only file allowed to import a write API, and it checks every target again. External tools such as macOS
+                <code>sips</code> only ever get a copy in app temp.
+              </p>
+            </li>
+            <li>
+              <b>A test that reads the source</b>
+              <p>
+                <code>test/safety.test.ts</code> fails if any other file uses <code>child_process</code>, an fs write, <code>trashItem</code> or sharp's
+                <code>.toFile</code>. It then attacks a protected folder with every fs write and delete API, symlinks and letter-case tricks included, and
+                checks the folder is byte-for-byte unchanged.
+              </p>
+            </li>
+            <li>
+              <b>The database, checked before it opens</b>
+              <p>SQLite writes through its own native code, below the guard, so its path is checked with <code>assertWritable</code> before it is opened.</p>
+            </li>
+            <li>
+              <b>No overlapping folders</b>
+              <p>A photo folder that contains, or sits inside, the app data folder is refused. Tests that touch a photo folder snapshot it before and after.</p>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ JOURNEY ============ -->
+    <section id="journey">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">Follow one photo</p>
+          <h2>From a folder on disk to "the best 12 of Sintra"</h2>
+          <p>
+            The clearest way through the code is to follow a single JPEG, from the moment the app finds it to the moment an assistant proposes it for a
+            photobook.
+          </p>
+        </div>
+
+        <div class="journey">
+          <article class="step">
+            <div class="no">1<small>SCAN</small></div>
+            <div class="body">
+              <h3>Found and fingerprinted <span class="files">scanner.ts · photoFs.ts</span></h3>
+              <p>
+                The scanner walks the folder through <code>photoFs</code>, the read-only gateway. Files whose path, size and modified time haven't changed are
+                skipped. Everything else is hashed with SHA-256, a few files at a time so an SSD stays busy without thrashing a spinning disk. Ignored folders
+                (<code>private</code> by default, at any depth) are never read.
+              </p>
+              <div class="facts">
+                <span class="fact">incremental</span><span class="fact">SHA-256 identity</span><span class="fact">JPEG · HEIC · RAW</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">2<small>ID</small></div>
+            <div class="body">
+              <h3>A photo is its content, not its path <span class="files">db.ts · ADR 0002</span></h3>
+              <p>
+                The hash becomes the photo. Where that content lives is a separate row in <code>files</code>, so one photo can have several copies, and moving,
+                renaming or pointing the app at a new folder keeps every album, tag, star and name. A missing file is hidden, not forgotten, until it comes
+                back.
+              </p>
+              <div class="facts"><span class="fact">photos 1 — n files</span><span class="fact">copies shown once</span></div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">3<small>TIME</small></div>
+            <div class="body">
+              <h3>When it was really taken <span class="files">metadata.ts · dates.ts · organiser.ts</span></h3>
+              <p>
+                EXIF gives the recorded time, which has no time zone. Cameras are often wrong: one was a year behind until it was fixed. The organiser compares
+                capture times with dated folder names like <code>08.25.sail_amsterdam</code>, suggests a correction per camera, and stores it in
+                <code>clock_corrections</code>. The capture time is derived from that, so corrections never stack, and the files are never edited.
+              </p>
+              <div class="facts"><span class="fact">taken_at_raw → taken_at</span><span class="fact amber">EXIF never rewritten</span></div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">4<small>DECODE</small></div>
+            <div class="body">
+              <h3>Decoded once, newest first <span class="files">analysis.ts · decode.ts</span></h3>
+              <p>
+                One background pass reads each photo a single time and feeds every analysis from that decode: 2048 px for faces, 224 px for content, 256 px for
+                quality. HEIC and RAW come from their cached preview. Results are saved per photo as soon as they're done, so quitting loses nothing and a moved
+                file costs nothing.
+              </p>
+              <div class="facts">
+                <span class="fact">one read per photo</span><span class="fact">resumable</span><span class="fact">versioned per analysis</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">5<small>LEARN</small></div>
+            <div class="body">
+              <h3>Faces, content and quality, all on device <span class="files">faces.ts · contentModel.ts · quality.ts</span></h3>
+              <p>
+                <b>Faces:</b> YuNet finds each face and five landmarks, the face is aligned to 112×112, and SFace turns it into 128 numbers.
+                <b>Content:</b> SigLIP turns the photo into 768 numbers that live in the same space as a typed phrase, so "snow" can be compared with every
+                photo without reading any of them again. It was chosen by benchmarking six models. <b>Quality:</b> sharpness (Laplacian variance) and exposure,
+                plain arithmetic with no model judging beauty.
+              </p>
+              <div class="facts">
+                <span class="fact">YuNet + SFace</span><span class="fact">SigLIP fp16</span><span class="fact">int8 vectors, 768 B a photo</span
+                ><span class="fact amber">models SHA-256 pinned</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">6<small>GROUP</small></div>
+            <div class="body">
+              <h3>Organised without being asked <span class="files">events.ts · suggestions.ts · faceGroups.ts</span></h3>
+              <p>
+                A meaningfully named folder is an event. Loose photos split wherever there's an 18-hour gap. Bursts of 20 or more become suggested albums,
+                hidden once you've decided on them or they're mostly in an album already. Faces cluster into people. Grouping errs towards splitting (ADR 0006),
+                because two groups of one person are fixed by typing the same name, while one group mixing two people is a chore to untangle. Name a group once
+                and future photos are recognised.
+              </p>
+              <div class="facts"><span class="fact">computed, not stored</span><span class="fact">decisions kept by photo</span></div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">7<small>FIND</small></div>
+            <div class="body">
+              <h3>Search by what's in it <span class="files">photoSearch.ts · vectorStore.ts</span></h3>
+              <p>
+                "jake beach 2025" is split into a person, a date and a content phrase. Name matches come first, as they always did. Then come content matches:
+                the phrase goes through SigLIP's text encoder and is compared with every photo's vector in SQL with sqlite-vec, filtered by the same dates and
+                people in the same query, and kept above a calibrated minimum score. Only <code>vectorStore.ts</code> knows how vectors are stored, so the index
+                can change without touching search.
+              </p>
+              <div class="facts">
+                <span class="fact">exact cosine in SQL</span><span class="fact">min score 0.0425</span><span class="fact">100k photos tested</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">8<small>CHOOSE</small></div>
+            <div class="body">
+              <h3>Best of: the few that tell the story <span class="files">bestOf.ts · bestOfService.ts</span></h3>
+              <p>
+                Pure functions, so the same album always gives the same pick. Look-alikes (vectors at least 0.93 similar, shot within 10 minutes of each other)
+                collapse to one. The set is cut into moments by time and scene. A greedy pick backed by a max-heap then scores each photo: quality plus your own
+                signals (stars, albums, tags, named people) minus how much it repeats what's already chosen, until every moment and person is covered. Nothing
+                is stored until you make an album from it.
+              </p>
+              <div class="facts">
+                <span class="fact">deterministic</span><span class="fact">everyone included</span><span class="fact">no near-duplicates</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="step">
+            <div class="no">9<small>ASK</small></div>
+            <div class="body">
+              <h3>Handed to an assistant, decided by you <span class="files">assistantTools.ts · proposals.ts</span></h3>
+              <p>
+                With assistant access on, Claude can ask for that same Best of and propose a pick. The pick opens in the window for the owner to adjust and
+                keep, or to go back. The assistant learns which by asking the app. It sees ids, dates, album and people's names and the reasons for a pick, and
+                never a path, a place or a pixel.
+              </p>
+              <div class="facts"><span class="fact sky">propose, then approve</span><span class="fact sky">ids, not files</span></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DATA ============ -->
+    <section id="data">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">The data model</p>
+          <h2>Everything hangs off the photo, never off the file</h2>
+          <p>
+            One SQLite file in the app's data folder holds the whole library, on Node's built-in <code>node:sqlite</code> with no native module to rebuild for
+            each platform (ADR 0005). The schema is at version 8. Every migration keeps albums, tags, names and settings, and has a test that opens the previous
+            version's database.
+          </p>
+        </div>
+
+        <figure class="figure">
+          <div class="scroll">
+            <svg viewBox="0 0 960 420" role="img" aria-labelledby="dm-t dm-d">
+              <title id="dm-t">Data model</title>
+              <desc id="dm-d">
+                The files table points at photos by hash. Albums, tags, decisions, faces, content vectors, quality and clock corrections all attach to the
+                photo.
+              </desc>
+              <defs>
+                <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-ink" />
+                </marker>
+              </defs>
+
+              <rect class="box" x="20" y="150" width="230" height="122" rx="6" />
+              <text class="t-title" x="38" y="178">files</text>
+              <text class="t-mono" x="38" y="204">path · size · mtime</text>
+              <text class="t-mono" x="38" y="224">photo_id →</text>
+              <text class="t-small" x="38" y="252">Where the content lives now</text>
+              <path class="line" d="M252 210 H326" marker-end="url(#ar2)" />
+              <text class="t-label" x="262" y="200">N : 1</text>
+
+              <rect class="box-fuji" x="330" y="112" width="250" height="198" rx="6" />
+              <text class="t-title" x="350" y="142">photos</text>
+              <text class="t-mono" x="350" y="168">hash (SHA-256)</text>
+              <text class="t-mono" x="350" y="188">taken_at_raw · camera</text>
+              <text class="t-mono" x="350" y="208">favorite</text>
+              <text class="t-mono txt-fuji" x="350" y="236">taken_at derived</text>
+              <text class="t-mono txt-fuji" x="350" y="256">present derived</text>
+              <text class="t-small" x="350" y="288">refreshDerived() after scans</text>
+
+              <path class="line" d="M582 160 C620 160, 620 72, 650 72" />
+              <path class="line" d="M582 210 H650" />
+              <path class="line" d="M582 262 C620 262, 620 346, 650 346" />
+
+              <rect class="box" x="650" y="18" width="290" height="112" rx="6" />
+              <text class="t-label" x="668" y="40">ORGANISED BY YOU</text>
+              <text class="t-mono" x="668" y="64">albums · album_photos</text>
+              <text class="t-mono" x="668" y="84">tags · photo_tags</text>
+              <text class="t-mono" x="668" y="104">suggestion_decisions</text>
+              <text class="t-mono" x="668" y="122">offer_declines</text>
+
+              <rect class="box" x="650" y="148" width="290" height="124" rx="6" />
+              <text class="t-label" x="668" y="170">LEARNED BY ANALYSIS</text>
+              <text class="t-mono" x="668" y="194">faces → people</text>
+              <text class="t-mono" x="668" y="214">face_rejections</text>
+              <text class="t-mono" x="668" y="234">content_vectors (sqlite-vec)</text>
+              <text class="t-mono" x="668" y="254">photo_quality</text>
+
+              <rect class="box" x="650" y="290" width="290" height="112" rx="6" />
+              <text class="t-label" x="668" y="312">CORRECTIONS AND SETTINGS</text>
+              <text class="t-mono" x="668" y="336">clock_corrections</text>
+              <text class="t-mono" x="668" y="356">settings</text>
+              <text class="t-small" x="668" y="382">camera + recorded time, so</text>
+              <text class="t-small" x="668" y="398">a fix never applies twice</text>
+            </svg>
+          </div>
+          <figcaption>
+            Suggested albums, event groups and clock suggestions are computed from these tables and cached in memory, not stored. Only the user's decisions
+            about them are stored, kept by photo, so a moved file doesn't bring a dismissed suggestion back.
+          </figcaption>
+        </figure>
+
+        <div class="notes">
+          <div class="note">
+            <h3>Versioned analysis</h3>
+            <p>
+              Each analysis has a version constant (<code>FACE_MODEL_VERSION</code>, <code>CONTENT_MODEL_VERSION</code>, <code>QUALITY_VERSION</code>). Bump one
+              and every photo is analysed again in the background. Search never mixes two models' vectors.
+            </p>
+          </div>
+          <div class="note">
+            <h3>Forgetting is real</h3>
+            <p>
+              Ignoring a folder forgets its photos entirely: faces, vectors, decisions (ADR 0007). Hiding private photos while keeping their analysis wouldn't
+              really keep them private.
+            </p>
+          </div>
+          <div class="note">
+            <h3>Exact keys, exact types</h3>
+            <p>
+              <code>node:sqlite</code> binds JavaScript numbers as REAL, so integer keys such as sqlite-vec rowids are passed as BigInt. A quirk of this kind is
+              written down once in the project's notes so it isn't rediscovered.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ASSISTANT ============ -->
+    <section id="assistant">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">Built for agents</p>
+          <h2>An MCP server inside a local-only app</h2>
+          <p>
+            The app makes no network calls, so cloud assistants don't connect to it. Instead it opens a door the owner controls. Off by default, assistant
+            access starts an MCP server on a local socket. Claude launches <code>relay.js</code>, which presents a 32-byte token and then just forwards bytes.
+            Turning the switch off, or "Forget connected assistants", cuts every connection at once. The server is hand-written, with no web framework, so
+            nothing in the app can listen on a port.
+          </p>
+        </div>
+
+        <figure class="figure">
+          <div class="scroll">
+            <svg viewBox="0 0 960 500" role="img" aria-labelledby="sq-t sq-d">
+              <title id="sq-t">A Best of proposal, end to end</title>
+              <desc id="sq-d">
+                Claude calls best_of through the relay, proposes a selection, the window shows it, the owner makes the album, and Claude reads the outcome with
+                proposal_status.
+              </desc>
+              <defs>
+                <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-sky" />
+                </marker>
+                <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 z" class="fill-fuji" />
+                </marker>
+              </defs>
+              <g>
+                <rect class="box-sky" x="40" y="16" width="150" height="44" rx="5" />
+                <text class="t-title" x="58" y="44">Claude</text>
+                <rect class="box-soft" x="270" y="16" width="150" height="44" rx="5" />
+                <text class="t-title" x="288" y="44">relay.js</text>
+                <rect class="box" x="500" y="16" width="170" height="44" rx="5" />
+                <text class="t-title" x="518" y="44">App (MCP server)</text>
+                <rect class="box-fuji" x="760" y="16" width="170" height="44" rx="5" />
+                <text class="t-title" x="778" y="44">Window · owner</text>
+                <line class="lane" x1="115" y1="60" x2="115" y2="488" />
+                <line class="lane" x1="345" y1="60" x2="345" y2="488" />
+                <line class="lane" x1="585" y1="60" x2="585" y2="488" />
+                <line class="lane" x1="845" y1="60" x2="845" y2="488" />
+              </g>
+
+              <path class="line-sky" d="M115 96 H341" marker-end="url(#ar3)" />
+              <text class="t-mono" x="126" y="88">launch · stdio</text>
+              <path class="line-sky" d="M345 126 H581" marker-end="url(#ar3)" />
+              <text class="t-mono" x="356" y="118">token, then initialize</text>
+
+              <path class="line-sky" d="M115 170 H581" marker-end="url(#ar3)" />
+              <text class="t-mono" x="126" y="162">tools/call best_of {album_id, count: 12}</text>
+              <path class="line-sky" d="M585 204 H119" marker-end="url(#ar3)" />
+              <text class="t-mono" x="356" y="196">12 ids · reasons · look-alikes</text>
+
+              <path class="line-sky" d="M115 248 H581" marker-end="url(#ar3)" />
+              <text class="t-mono" x="126" y="240">propose_selection {photo_ids}</text>
+              <path class="line-sky" d="M585 282 H119" marker-end="url(#ar3)" />
+              <text class="t-mono" x="356" y="274">proposal_id: 1 (returns at once)</text>
+
+              <path class="line-fuji" d="M585 300 H841" marker-end="url(#ar4)" />
+              <text class="t-mono txt-fuji" x="596" y="292">proposal:show</text>
+              <rect class="box-fuji" x="772" y="318" width="146" height="54" rx="5" />
+              <text class="t-small" x="786" y="340">Owner adjusts,</text>
+              <text class="t-small" x="786" y="358">presses Make album</text>
+              <path class="line-fuji" d="M845 392 H589" marker-end="url(#ar4)" />
+              <text class="t-mono txt-fuji" x="600" y="384">proposal:report approved</text>
+
+              <path class="line-sky" d="M115 432 H581" marker-end="url(#ar3)" />
+              <text class="t-mono" x="126" y="424">proposal_status {proposal_id: 1}</text>
+              <path class="line-sky" d="M585 466 H119" marker-end="url(#ar3)" />
+              <text class="t-mono" x="356" y="458">approved · album_id</text>
+            </svg>
+          </div>
+          <figcaption>
+            The relay sits on every call; it's drawn on the first two only. Proposals live in memory and end when the app quits. The first decision the window
+            reports is the one that counts.
+          </figcaption>
+        </figure>
+
+        <div class="tools">
+          <div class="tool"><code>library_overview</code><span>Counts, years, albums with spans, people, analysis progress. Call first.</span></div>
+          <div class="tool"><code>search_photos</code><span>The app's own search, with paging, dates, people and why each photo matched.</span></div>
+          <div class="tool"><code>best_of</code><span>The app's pick for an album, with reasons in the app's words.</span></div>
+          <div class="tool"><code>proposal_status</code><span>What the owner did with a proposal.</span></div>
+          <div class="tool writes"><code>create_album</code><span>A top-level album marked as the assistant's.</span></div>
+          <div class="tool writes"><code>add_to_album</code><span>Only to the assistant's own albums.</span></div>
+          <div class="tool writes"><code>remove_from_album</code><span>Same. Once the owner edits one, it's theirs.</span></div>
+          <div class="tool writes"><code>propose_selection</code><span>Opens a pick in the window for the owner to keep.</span></div>
+        </div>
+
+        <div class="notes">
+          <div class="note">
+            <h3>Written for a model</h3>
+            <p>
+              Each tool description says when to use it, gives an example call, and explains the album-first route to Best of. Errors name the bad field and
+              what to do next. Results lead with totals, so a model knows when to page.
+            </p>
+          </div>
+          <div class="note">
+            <h3>An allowlist, not a filter</h3>
+            <p>
+              Every result is built field by field from what ADR 0011 allows. A test plants sentinel words in the folder path, folder and file names, camera and
+              hash, and checks that none of them reaches the output of any tool.
+            </p>
+          </div>
+          <div class="note">
+            <h3>The owner stays in charge</h3>
+            <p>
+              An assistant can only change albums it made. Once the owner renames or edits one, it's theirs. Best of picks are proposals: nothing is kept until
+              the owner presses Make album.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EVALS ============ -->
+    <section id="evals">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">Measuring it</p>
+          <h2>Evals that grade what changed, not what the model said</h2>
+          <p>
+            Ten everyday requests run through Claude Code headless against the built app, on a throwaway copy of a generated library of 572 images. Each run is
+            isolated to the eight Photo Library tools. A scripted owner presses Make album or goes back when a proposal appears. Each run is graded on the
+            library afterwards: which albums exist, what's in them, and what happened to each proposal. Caps, a budget gate and a before-and-after fingerprint
+            of the photo folder keep runs cheap and safe.
+          </p>
+        </div>
+
+        <div class="scroll">
+          <table class="evals">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Request</th>
+                <th>Passed</th>
+                <th>Calls</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>trip</td>
+                <td>Make an album of the photos from the Norway trip.</td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">3</td>
+                <td class="num">$0.034</td>
+              </tr>
+              <tr>
+                <td>people-date-place</td>
+                <td>Make an album called 'Alex at the beach' of the beach photos from 2024 that Alex is in.</td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">3</td>
+                <td class="num">$0.025</td>
+              </tr>
+              <tr class="failrow">
+                <td>content</td>
+                <td>Make an album of the red photos from 2025.</td>
+                <td>
+                  <span class="dots"><i class="dot no"></i><i class="dot no"></i><i class="dot no"></i></span>
+                </td>
+                <td class="num">2</td>
+                <td class="num">$0.021</td>
+              </tr>
+              <tr>
+                <td>last-visit</td>
+                <td>When were we last in Poland? Put just that visit in an album.</td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">3</td>
+                <td class="num">$0.025</td>
+              </tr>
+              <tr>
+                <td>whole-year</td>
+                <td>Make an album with every photo from 2024.</td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">5</td>
+                <td class="num">$0.13</td>
+              </tr>
+              <tr>
+                <td>owners-album</td>
+                <td>Add the Sintra photos to my Lisbon album. <span class="muted">(Passes if the owner's album is left unchanged.)</span></td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">2</td>
+                <td class="num">$0.030</td>
+              </tr>
+              <tr>
+                <td>fix-own-album</td>
+                <td>In the 'Beach with Sam' album you made, take out the photos Sam isn't in.</td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">4</td>
+                <td class="num">$0.027</td>
+              </tr>
+              <tr>
+                <td>best-of-approve</td>
+                <td>Pick the best 12 photos of my Sintra 2026 album for me to look over. <span class="muted">(Owner keeps it.)</span></td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">3</td>
+                <td class="num">$0.027</td>
+              </tr>
+              <tr>
+                <td>best-of-reject</td>
+                <td>Choose the best 15 photos of 2026 for a photobook and let me look at them first. <span class="muted">(Owner goes back.)</span></td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">5</td>
+                <td class="num">$0.060</td>
+              </tr>
+              <tr>
+                <td>nothing-there</td>
+                <td>Make an album of our photos from Iceland. <span class="muted">(There are none.)</span></td>
+                <td>
+                  <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+                </td>
+                <td class="num">4</td>
+                <td class="num">$0.023</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="totals">
+          <span>Model <b>claude-sonnet-5-5</b></span
+          ><span>Passed <b>27 of 30</b></span
+          ><span>Full run <b>about $1.10, 5 min</b></span
+          ><span>Calls and cost are medians per run</span>
+        </div>
+
+        <div class="notes">
+          <div class="note">
+            <h3>What it found</h3>
+            <p>
+              The content task failed all 3 runs, the same way each time. Search returned the 10 red photos first, then 4 weaker matches, with only a rank and
+              no strength. Claude kept all 14. This is a gap in the tool, not in the model, and the eval will measure the fix.
+            </p>
+          </div>
+          <div class="note">
+            <h3>Invalid is not a fail</h3>
+            <p>
+              An API error, a usage limit, a timeout or a server that didn't connect makes a run invalid, quoting the reason. Only runs that really reached the
+              model are graded.
+            </p>
+          </div>
+          <div class="note">
+            <h3>Noise, stated</h3>
+            <p>
+              The report says plainly that one run in three is noise. A change counts as likely real only when the pass rate moves by half. Baselines record the
+              model, CLI version, login mode and a hash of the tool descriptions.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DECISIONS ============ -->
+    <section id="decisions">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">Why it is this way</p>
+          <h2>Eleven decisions, written down</h2>
+          <p>
+            Each decision that would be expensive to reverse has a short record: the context, the options weighed and what was chosen. They're the first thing a
+            new contributor or agent reads.
+          </p>
+        </div>
+        <div class="adrs">
+          <div class="adr">
+            <span class="n">0001</span>
+            <div><b>The photo folder is read-only</b><span>All organising is virtual, in the app's own database.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0002</span>
+            <div><b>Photos are identified by content</b><span>A SHA-256 hash, so moves and renames lose nothing.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0003</span>
+            <div><b>All processing is local</b><span>No network calls at runtime; models ship with the app.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0004</span>
+            <div><b>A desktop app, on Electron</b><span>Direct folder access and native decoding, without a server.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0005</span>
+            <div><b>Built-in node:sqlite</b><span>No native SQLite module to rebuild for each platform.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0006</span>
+            <div><b>Face grouping errs towards splitting</b><span>Merging two groups is one step; untangling one isn't.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0007</span>
+            <div><b>Ignored folders are forgotten</b><span>Their faces, vectors and decisions go too.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0008</span>
+            <div><b>SigLIP base at half precision</b><span>Chosen by benchmarking six models on real queries.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0009</span>
+            <div><b>Vectors in the library, via sqlite-vec</b><span>Exact search in SQL, filtered in the same query.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0010</span>
+            <div><b>Exports write to one granted folder</b><span>A per-export grant through the guard, then revoked.</span></div>
+          </div>
+          <div class="adr">
+            <span class="n">0011</span>
+            <div><b>Assistants may read a library's text</b><span>When the owner turns it on: ids and names, never files or places.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT'S BUILT ============ -->
+    <section id="process">
+      <div class="wrap">
+        <div class="head prose">
+          <p class="eyebrow">How it's built</p>
+          <h2>A spec-first pipeline that agents can run</h2>
+          <p>
+            Features go through the same pipeline, by hand in Claude Code or headless from a GitHub issue. Each stage writes something the next one reads: a
+            spec with testable acceptance criteria, a design, the code, a review, and a QA report that proves each criterion. The owner approves the spec and
+            the design and merges the PR. Agents push feature branches only, and a hook blocks pushes to main, force-pushes and merges.
+          </p>
+        </div>
+        <div class="pipeline">
+          <div class="stage owner"><span class="who">Owner</span><b>Idea</b><span>Plain words on an issue</span></div>
+          <div class="stage"><span class="who">Agent</span><b>Validate</b><span>Against the brief, ADRs, code and open issues</span></div>
+          <div class="stage"><span class="who">Product agent</span><b>Spec</b><span>Stories and acceptance criteria</span></div>
+          <div class="stage"><span class="who">Designer agent</span><b>Design</b><span>Screens, states and copy</span></div>
+          <div class="stage owner"><span class="who">Owner</span><b>Approve</b><span>Comments "go"</span></div>
+          <div class="stage"><span class="who">Agent</span><b>Build</b><span>Tests first, against the criteria</span></div>
+          <div class="stage"><span class="who">Reviewer · QA</span><b>Check</b><span>Spec, conventions, photo safety</span></div>
+          <div class="stage owner"><span class="who">Owner</span><b>Merge</b><span>After Linux CI is green</span></div>
+        </div>
+        <div class="notes">
+          <div class="note">
+            <h3>Docs written for agents</h3>
+            <p>
+              CLAUDE.md holds the hard rules and the gotchas, CONTEXT.md the vocabulary, and each spec a Decisions log. An agent starting cold reads those and
+              knows why things are the way they are.
+            </p>
+          </div>
+          <div class="note">
+            <h3>Lean CI</h3>
+            <p>Linux runs on ready PRs that change code. Windows and macOS run by hand when a change touches paths, sockets or native modules.</p>
+          </div>
+          <div class="note">
+            <h3>Generated photos only</h3>
+            <p>
+              Tests and evals build their own libraries: coloured scenes, bursts, scans and placeholder people. The owner's real photos are never in the repo,
+              the tests or a prompt.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <span>Photo Library · architecture as of November 2026</span>
+        <span>~7,300 lines main · ~3,900 renderer · ~6,900 tests</span>
+      </div>
+    </footer>
+  </body>
+</html>

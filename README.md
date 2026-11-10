@@ -27,6 +27,10 @@ npm test           # unit + integration tests
 npm run typecheck
 ```
 
+## Architecture
+
+[`docs/architecture.html`](docs/architecture.html) walks through how the app is built: its processes, the five layers that keep the photo folder read-only, one photo's path from scan to search and Best of, the data model, assistant access and its evals. Open it in a browser (download it, or clone the repo).
+
 ## AI assistants (assistant access)
 
 Claude, or any MCP client, can search the library and make albums of its own (spec 0008, ADR 0011). It never sees the photos, file or folder names, or places; it sees dates, album and people's names and favourites, which a cloud assistant may send to its company's servers. Off by default.

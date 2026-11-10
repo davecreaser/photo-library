@@ -1,0 +1,101 @@
+{
+  "date": "2026-11-10",
+  "model": "claude-sonnet-5-5",
+  "cliVersion": "2.1.322",
+  "appCommit": "a873fe1",
+  "authMode": "login",
+  "toolsHash": "774722d4f4edd339426156aa674c1a2e50b62f820621575193c7584694f437d8",
+  "runsPerTask": 3,
+  "tasks": {
+    "trip": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 34641,
+      "output": 458,
+      "cost": 0.0253935
+    },
+    "people-date-place": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 30103,
+      "output": 470,
+      "cost": 0.0191944
+    },
+    "content": {
+      "passes": 0,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 2,
+      "input": 22538,
+      "output": 357,
+      "cost": 0.0161326
+    },
+    "last-visit": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 24060,
+      "output": 372,
+      "cost": 0.0183572
+    },
+    "whole-year": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 5,
+      "input": 87804,
+      "output": 1906,
+      "cost": 0.0941089
+    },
+    "owners-album": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 2,
+      "input": 16245,
+      "output": 455,
+      "cost": 0.0191705
+    },
+    "fix-own-album": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 4,
+      "input": 31548,
+      "output": 368,
+      "cost": 0.020108900000000002
+    },
+    "best-of-approve": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 3,
+      "input": 30998,
+      "output": 478,
+      "cost": 0.0205275
+    },
+    "best-of-reject": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 5,
+      "input": 66749,
+      "output": 1026,
+      "cost": 0.046298900000000004
+    },
+    "nothing-there": {
+      "passes": 3,
+      "valid": 3,
+      "invalid": 0,
+      "toolCalls": 5,
+      "input": 30328,
+      "output": 736,
+      "cost": 0.0228355
+    }
+  }
+}

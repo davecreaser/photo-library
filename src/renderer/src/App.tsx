@@ -23,6 +23,7 @@ import { LookalikeGroup } from './components/LookalikeGroup.tsx'
 import { LeanDialog } from './components/LeanDialog.tsx'
 import { NOT_ENOUGH } from './bestOfCopy.ts'
 import { Viewer } from './components/Viewer.tsx'
+import { ExportDialog } from './components/ExportDialog.tsx'
 import { SelectionBar } from './components/SelectionBar.tsx'
 import { Welcome } from './components/Welcome.tsx'
 import { SuggestionsView, offerMeta, suggestionMeta, type SuggestionNotice } from './components/SuggestionsView.tsx'
@@ -53,6 +54,12 @@ export type View =
   | { kind: 'bestOf'; source: BestOfSource }
 
 const api = window.api
+
+/** Does the album, or an album inside it, have photos? */
+function albumHasPhotos(albums: Album[], id: number): boolean {
+  const self = albums.find((a) => a.id === id)
+  return !!self && (self.photoCount > 0 || albums.some((a) => a.parentId === id && albumHasPhotos(albums, a.id)))
+}
 
 export function App() {
   const [library, setLibrary] = useState<LibraryInfo | null>(null)
@@ -85,6 +92,7 @@ export function App() {
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
   const [showCorrections, setShowCorrections] = useState(false)
   const [showIgnored, setShowIgnored] = useState(false)
+  const [exportingAlbum, setExportingAlbum] = useState<number | null>(null)
   const [people, setPeople] = useState<Person[]>([])
   const [faceProgress, setFaceProgress] = useState<FaceProgress | null>(null)
   const [contentProgress, setContentProgress] = useState<ContentProgress | null>(null)
@@ -480,6 +488,14 @@ export function App() {
                 <button onClick={() => setConfirmForgetPerson(true)}>Forget name…</button>
               </div>
             ))}
+          {view.kind === 'album' && selected.size === 0 && albumHasPhotos(albums, view.id) && (
+            <div className="header-actions">
+              <button onClick={() => setExportingAlbum(view.id)} title="Saves JPEG copies of this album’s photos in a new folder. Your photos are not touched.">
+                Save copies…
+              </button>
+            </div>
+          )}
+          {exportingAlbum !== null && <ExportDialog source={{ albumId: exportingAlbum }} onClose={() => setExportingAlbum(null)} />}
           {currentSuggestion && selected.size === 0 && (
             <div className="header-actions">
               {namingSuggestion ? (

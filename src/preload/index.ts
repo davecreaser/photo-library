@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, ContentProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
+import type { Api, ContentProgress, ExportProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
 
 const api: Api = {
   getBestOf: (r) => ipcRenderer.invoke('bestOf:get', r),
@@ -13,6 +13,15 @@ const api: Api = {
   },
   getLeanTowardsStars: () => ipcRenderer.invoke('bestOf:lean'),
   setLeanTowardsStars: (on) => ipcRenderer.invoke('bestOf:setLean', on),
+  exportSummary: (source) => ipcRenderer.invoke('export:summary', source),
+  exportCopies: (source, options) => ipcRenderer.invoke('export:start', source, options),
+  cancelExport: () => ipcRenderer.invoke('export:cancel'),
+  revealExport: () => ipcRenderer.invoke('export:reveal'),
+  onExportProgress: (cb) => {
+    const listener = (_e: unknown, p: ExportProgress) => cb(p)
+    ipcRenderer.on('export:progress', listener)
+    return () => ipcRenderer.removeListener('export:progress', listener)
+  },
   getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),
   setSidebarSections: (s) => ipcRenderer.invoke('sidebar:set', s),
   getLibrary: () => ipcRenderer.invoke('library:get'),

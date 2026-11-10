@@ -1,6 +1,6 @@
 // End-to-end: the real built app, driven like a user, against a synthetic library.
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1186,4 +1186,187 @@ test('best of (AC-9, AC-11): an empty library and a library with a 0-photo album
   await expect(page.locator('.empty')).toBeVisible()
   // The photo folder's fingerprint is asserted in afterAll for this whole file.
   expect(fingerprint(lib.root)).toBe(before)
+})
+
+// --- Spec 0007 QA: save copies to a folder ---
+
+/** Answers the next folder dialogs with `dir` (the default stub answers with the photo folder). */
+async function dialogAnswers(dir: string) {
+  await app.evaluate(({ dialog }, dir) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog
+  }, dir)
+}
+const exportDialog = () => page.getByRole('dialog', { name: 'Save copies' })
+const newDest = () => mkdtempSync(join(tmpdir(), 'pl-e2e-dest-'))
+const selectTiles = async (n: number) => {
+  for (let i = 0; i < n; i++) {
+    const t = page.locator('.grid .tile').nth(i)
+    await t.hover()
+    await t.locator('.check').click()
+  }
+}
+
+test('save copies (AC-1,2,4,7,8,9): selection bar writes numbered JPEGs into a new sub-folder; the photo folder is refused; Done and Show in folder', async () => {
+  const dest = newDest()
+  try {
+    await chooseLibrary()
+    // AC-1: nothing selected, no button.
+    await expect(page.getByRole('button', { name: 'Save copies…' })).toHaveCount(0)
+    await nav('Undated').click() // 2 undated photos
+    await selectTiles(2)
+    await page.locator('.selection-bar').getByRole('button', { name: 'Save copies…' }).click()
+    await expect(exportDialog().locator('h2')).toHaveText('Save copies of 2 photos')
+    await expect(exportDialog()).toContainText('Your photo folder is not touched')
+    await expect(exportDialog()).toContainText('including where it was taken')
+    await expect(exportDialog().getByRole('button', { name: 'Cancel' })).toBeVisible()
+
+    // AC-2: the photo folder itself (the default stub's answer) is refused, nothing written.
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog().locator('.error')).toHaveText('That folder is inside your photo folder. Choose somewhere else, such as Desktop or Documents.')
+    expect(fingerprint(lib.root)).toBe(before)
+    expect(readdirSync(lib.root).some((n) => n.startsWith('Photos '))).toBe(false)
+    // A sub-folder of the photo folder is refused too.
+    await dialogAnswers(join(lib.root, 'house_listing'))
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog().locator('.error')).toContainText('inside your photo folder')
+    expect(fingerprint(lib.root)).toBe(before)
+
+    // A proper destination: new "Photos <date>" sub-folder, 0001.jpg, 0002.jpg (undated, folder-and-name order).
+    await dialogAnswers(dest)
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog()).toContainText(/Saved 2 of 2 copies to Photos \d{4}-\d{2}-\d{2}\./)
+    await expect(exportDialog().getByRole('button', { name: 'Show in folder' })).toBeVisible()
+    await expect(exportDialog().getByRole('button', { name: 'Done' })).toBeVisible()
+    const [sub] = readdirSync(dest)
+    expect(sub).toMatch(/^Photos \d{4}-\d{2}-\d{2}$/)
+    expect(readdirSync(join(dest, sub)).sort()).toEqual(['0001.jpg', '0002.jpg'])
+    for (const f of readdirSync(join(dest, sub)))
+      expect(
+        readFileSync(join(dest, sub, f))
+          .subarray(0, 2)
+          .toString('hex')
+      ).toBe('ffd8')
+    await exportDialog().getByRole('button', { name: 'Done' }).click()
+    await expect(exportDialog()).toHaveCount(0)
+
+    // AC-2: the choice is not remembered: asking again opens the dialog again; same name gets a number.
+    await page.locator('.selection-bar').getByRole('button', { name: 'Save copies…' }).click()
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog()).toContainText(/Saved 2 of 2 copies to Photos \d{4}-\d{2}-\d{2} 2\./)
+    expect(readdirSync(dest)).toHaveLength(2)
+    await exportDialog().getByRole('button', { name: 'Done' }).click()
+
+    // AC-8
+    expect(fingerprint(lib.root)).toBe(before)
+  } finally {
+    rmSync(dest, { recursive: true, force: true })
+  }
+})
+
+test('save copies (AC-1,2,3,4,5): album header exports the album and its sub-albums; size limit, date in names, options remembered but not the folder; Esc cancels', async () => {
+  const own = await poland()
+  const dest = newDest()
+  try {
+    await dialogAnswers(dest)
+    // AC-1: an empty album has no button.
+    await page.evaluate(() => window.api.createAlbum('Empty', null))
+    await rescan()
+    await albumsNamed('Empty').click()
+    await expect(page.getByRole('button', { name: 'Save copies…' })).toHaveCount(0)
+
+    await albumsNamed('Poland').click()
+    await expect(page.locator('h1')).toHaveText('Poland')
+    await page.locator('.header-actions').getByRole('button', { name: 'Save copies…' }).click()
+    await expect(exportDialog().locator('h2')).toHaveText('Save copies of 3 photos')
+
+    // Esc before saving cancels, writes nothing.
+    await page.keyboard.press('Escape')
+    await expect(exportDialog()).toHaveCount(0)
+    expect(readdirSync(dest)).toHaveLength(0)
+
+    // Options: 100 px limit isn't offered; choose 1600 (photos are 300x200, so not enlarged) and the date.
+    await page.locator('.header-actions').getByRole('button', { name: 'Save copies…' }).click()
+    await expect(exportDialog().locator('select option')).toHaveText(['Original size', '4000 px', '2000 px', '1600 px'])
+    await exportDialog().locator('select').selectOption('1600')
+    await exportDialog().getByLabel('Add the date to file names').check()
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).press('Enter')
+    await expect(exportDialog()).toContainText(/Saved 3 of 3 copies to Poland \d{4}-\d{2}-\d{2}\./)
+    const sub = join(dest, readdirSync(dest)[0])
+    const names = readdirSync(sub).sort()
+    expect(names).toHaveLength(3)
+    expect(names[0]).toMatch(/^0001 2024-12-13 1000\.jpg$/)
+    expect(names[2]).toMatch(/^0003 2024-12-13 1200\.jpg$/)
+    const orig_path = join(own.root, 'fuji/trips/12.25.poland', 'DSCF020.JPG')
+    const orig = readFileSync(orig_path)
+    expect(readFileSync(join(sub, names[0])).equals(orig)).toBe(false) // re-encoded, not copied byte for byte
+    await exportDialog().getByRole('button', { name: 'Done' }).click()
+
+    // Options are remembered; the destination is not (the dialog still asks via the folder dialog).
+    await page.locator('.header-actions').getByRole('button', { name: 'Save copies…' }).click()
+    await expect(exportDialog().locator('select')).toHaveValue('1600')
+    await expect(exportDialog().getByLabel('Add the date to file names')).toBeChecked()
+    await exportDialog().locator('select').selectOption('0')
+    await exportDialog().getByLabel('Add the date to file names').uncheck()
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog()).toContainText(/Saved 3 of 3 copies to Poland \d{4}-\d{2}-\d{2} 2\./)
+    const sub2 = join(
+      dest,
+      readdirSync(dest).find((n) => n.endsWith(' 2'))!
+    )
+    expect(readdirSync(sub2).sort()).toEqual(['0001.jpg', '0002.jpg', '0003.jpg'])
+    // Original size JPEG: byte for byte.
+    expect(readFileSync(join(sub2, '0001.jpg')).equals(orig)).toBe(true)
+    await exportDialog().getByRole('button', { name: 'Done' }).click()
+    expect(readFileSync(orig_path)).toEqual(orig) // untouched
+  } finally {
+    rmSync(own.root, { recursive: true, force: true })
+    rmSync(dest, { recursive: true, force: true })
+  }
+})
+
+test('save copies (AC-6,7): Cancel while saving keeps the dialog usable and says how many were saved; a file missing from disk is skipped and listed', async () => {
+  const own = await createLibrary()
+  const dest = newDest()
+  try {
+    await app.close()
+    await launch(own.root)
+    await chooseLibrary(own.uniquePhotos)
+    const ownBefore = fingerprint(own.root)
+
+    // Cancel: the folder dialog is slow, so the dialog sits in its "saving" state and Cancel is pressed there.
+    await app.evaluate(({ dialog }, dir) => {
+      dialog.showOpenDialog = (async () => {
+        await new Promise((r) => setTimeout(r, 1500))
+        return { canceled: false, filePaths: [dir] }
+      }) as typeof dialog.showOpenDialog
+    }, dest)
+    await nav('Undated').click()
+    await selectTiles(2)
+    await page.locator('.selection-bar').getByRole('button', { name: 'Save copies…' }).click()
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog().locator('h2')).toHaveText('Saving copies')
+    await exportDialog().getByRole('button', { name: 'Cancel' }).dblclick() // repeated clicks are harmless
+    await expect(exportDialog()).toContainText('Stopped. 0 copies were saved.')
+    await expect(exportDialog().getByRole('button', { name: 'Show in folder' })).toHaveCount(0)
+    await exportDialog().getByRole('button', { name: 'Done' }).click()
+
+    // A photo deleted from disk after the scan: skipped, listed, the rest saved.
+    rmSync(join(own.root, 'house_listing', 'scan0.jpg'))
+    await dialogAnswers(dest) // the two photos are still selected
+    await page.locator('.selection-bar').getByRole('button', { name: 'Save copies…' }).click()
+    await exportDialog().getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(exportDialog()).toContainText(/Saved 1 of 2 copies to Photos/)
+    await expect(exportDialog().locator('.skipped-list li')).toHaveText(["scan0.jpg (couldn't be read)"])
+    await expect(exportDialog().getByRole('button', { name: 'Show in folder' })).toBeVisible()
+    const subs = readdirSync(dest).sort()
+    // Known minor: the cancelled run left its (empty) folder behind.
+    expect(subs).toHaveLength(2)
+    expect(readdirSync(join(dest, subs[0]))).toEqual([])
+    expect(readdirSync(join(dest, subs[1]))).toEqual(['0002.jpg']) // known minor: a skipped photo leaves a gap in the numbering
+    await exportDialog().getByRole('button', { name: 'Done' }).click()
+    expect(ownBefore).not.toBe(fingerprint(own.root)) // only because the test itself deleted scan0.jpg
+  } finally {
+    rmSync(own.root, { recursive: true, force: true })
+    rmSync(dest, { recursive: true, force: true })
+  }
 })

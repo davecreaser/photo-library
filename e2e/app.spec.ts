@@ -1497,6 +1497,7 @@ test('assistant best of (spec 0009, AC-7, AC-8, AC-10, AC-12): a year to an AI a
     try {
       await a.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
       expect((await a.rpc('tools/list')).result.tools).toHaveLength(8)
+      expect((await a.tool('library_overview')).photos).toBeGreaterThan(0)
       const year = await a.tool('search_photos', { from: '2026-01-01', to: '2026-12-31', limit: 200 })
       const made = await a.tool('create_album', { name: '2026 by Claude', photo_ids: year.photos.map((p: { id: number }) => p.id) })
       const best = await a.tool('best_of', { album_id: made.album_id, count: 12 })
@@ -1550,6 +1551,7 @@ test('assistant best of (spec 0009, AC-7, AC-8, AC-10, AC-12): a year to an AI a
       await page.getByRole('button', { name: 'Back to 2026 by Claude' }).click()
       await expect.poll(async () => (await a.tool('proposal_status', { proposal_id: second.proposal_id })).status).toBe('closed')
       expect((await page.evaluate(() => window.api.listAlbums())).length).toBe(albumsBefore)
+      expect((await a.tool('remove_from_album', { album_id: made.album_id, photo_ids: [pick[0]] })).removed).toBe(1)
       for (const leak of ['sintra_week', '.JPG', 'S0_', 'One0']) expect(a.out()).not.toContain(leak)
     } finally {
       a.proc.kill()
@@ -1598,6 +1600,16 @@ test('assistant best of (spec 0009, AC-7, AC-9, AC-11): a new pick over edits as
     try {
       await b.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })
       expect((await b.tool('proposal_status', { proposal_id: third })).status).toBe('expired')
+      // Deleting the source album while a proposal shows leaves the screen and closes the proposal (AC-9).
+      const fourth = (await b.tool('propose_selection', { album_id: album.album_id, photo_ids: all.slice(0, 7) })).proposal_id
+      await expect(prompt).toBeVisible({ timeout: 2000 }) // the screen still has the owner's edit
+      const row = albumItem('Iceland')
+      await row.hover()
+      await row.getByTitle('Delete album').click()
+      await page.locator('.sidebar .confirm').getByRole('button', { name: 'Delete' }).click()
+      await expect(page.getByRole('heading', { name: 'Best of Iceland' })).toHaveCount(0)
+      await expect(prompt).toHaveCount(0)
+      expect((await b.tool('proposal_status', { proposal_id: fourth })).status).toBe('closed')
     } finally {
       b.proc.kill()
     }

@@ -193,8 +193,12 @@ export function App() {
     setSelected(new Set())
     setNotice(null)
     setBestOfState({ edited: false, made: false })
-    setView({ kind: 'bestOf', source: { kind: 'album', id: p.albumId }, proposal: p })
+    setProposalExpired(false)
+    const next: View = { kind: 'bestOf', source: { kind: 'album', id: p.albumId }, proposal: p }
+    setView(next)
     setProposalArrivedOver(over)
+    // Proposals can arrive faster than React renders: the next one must see this one on screen.
+    live.current = { ...live.current, view: next, incoming: null, bestOfState: { edited: false, made: false } }
   }, [])
   useEffect(
     () =>
@@ -209,6 +213,7 @@ export function App() {
         if (current.kind === 'bestOf' && state.edited && !state.made) {
           if (waiting) api.reportProposal(waiting.proposalId, { kind: 'replaced', by: p.proposalId })
           setIncoming(p)
+          live.current = { ...live.current, incoming: p }
         } else openProposal(p)
       }),
     [openProposal]
@@ -217,10 +222,38 @@ export function App() {
     if (incoming) api.reportProposal(incoming.proposalId, { kind: 'closed' })
     setIncoming(null)
   }
-  // With access off no proposal can arrive, and one waiting behind the owner's edits is gone.
+  // With access off no proposal can arrive, and one waiting behind the owner's edits is gone; the one
+  // on screen has expired, even if access comes back on.
+  const [proposalExpired, setProposalExpired] = useState(false)
   useEffect(() => {
-    if (assistantStatus && assistantStatus.state !== 'on') setIncoming(null)
+    if (assistantStatus && assistantStatus.state !== 'on') {
+      setIncoming(null)
+      setProposalExpired(true)
+    }
   }, [assistantStatus])
+  // Leaving the Best of screen any other way than the prompt closes a proposal waiting behind it.
+  useEffect(() => {
+    if (view.kind !== 'bestOf' && incoming) {
+      api.reportProposal(incoming.proposalId, { kind: 'closed' })
+      setIncoming(null)
+    }
+  }, [view, incoming])
+  // The source album was deleted while its Best of shows: leave it, which closes a proposal (AC-9).
+  // Only once the album was seen: a proposal can arrive before the sidebar lists a new album.
+  const sourceSeen = useRef<number | null>(null)
+  const bestOfAlbumId = view.kind === 'bestOf' && view.source.kind === 'album' ? view.source.id : null
+  useEffect(() => {
+    if (bestOfAlbumId === null) {
+      sourceSeen.current = null
+      return
+    }
+    const listed = albums.some((a) => a.id === bestOfAlbumId)
+    if (listed) sourceSeen.current = bestOfAlbumId
+    else if (sourceSeen.current === bestOfAlbumId) {
+      sourceSeen.current = null
+      setView({ kind: 'all' })
+    }
+  }, [albums, bestOfAlbumId])
 
   // An assistant made or changed an album (spec 0008, AC-13): the sidebar shows it, and an open album refreshes in place.
   const viewIsAlbum = view.kind === 'album'
@@ -528,7 +561,7 @@ export function App() {
             {currentOffer && <div className="subtitle">{offerMeta(currentOffer)}</div>}
             {view.kind === 'album' && albums.find((a) => a.id === view.id)?.madeByAssistant && <div className="subtitle">{ASSISTANT_ALBUM_HINT}</div>}
             {view.kind === 'bestOf' && view.proposal && (
-              <div className="subtitle">{assistantStatus?.state !== 'on' ? PROPOSAL_ACCESS_OFF : bestOfState.made ? PROPOSAL_MADE : PROPOSAL_WAITING}</div>
+              <div className="subtitle">{proposalExpired ? PROPOSAL_ACCESS_OFF : bestOfState.made ? PROPOSAL_MADE : PROPOSAL_WAITING}</div>
             )}
           </div>
           {currentPerson &&

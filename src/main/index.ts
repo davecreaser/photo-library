@@ -221,6 +221,10 @@ function createWindow(): void {
  * Opens an assistant's proposal in the window (spec 0009, AC-7): opened if none is open, restored,
  * shown and focused; where the system refuses focus, the taskbar or dock asks for attention.
  */
+function stopFlashing(): void {
+  window?.flashFrame(false)
+}
+
 function showProposal(p: ProposalShow): void {
   if (!window) createWindow()
   const win = window!
@@ -233,7 +237,8 @@ function showProposal(p: ProposalShow): void {
   win.focus()
   if (!win.isFocused()) {
     win.flashFrame(true)
-    win.once('focus', () => win.flashFrame(false))
+    win.removeListener('focus', stopFlashing)
+    win.once('focus', stopFlashing)
     if (process.platform === 'darwin') app.dock?.bounce('informational')
   }
 }

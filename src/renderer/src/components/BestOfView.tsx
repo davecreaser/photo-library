@@ -91,19 +91,24 @@ export function BestOfView({
   // A proposal is edited once the photos shown differ from the assistant's pick (spec 0009, Design).
   const proposed = proposal?.photoIds ?? []
   const proposedSet = new Set(proposed)
+  // Worked out from the owner's changes, not the last answer, so it is right while the engine thinks.
   const edited = proposal
-    ? !!view && !view.tooFew && (view.photos.length !== proposed.length || view.photos.some((p) => !proposedSet.has(p.id)))
+    ? count !== proposed.length || fixed.length !== proposed.length || fixed.some((id) => !proposedSet.has(id)) || exclude.some((id) => proposedSet.has(id))
     : fixed.length > 0 || exclude.length > 0
+  // Proposed photos the owner removed and added back are theirs now ("You chose this one").
+  const [readded, setReadded] = useState<number[]>([])
+  const approvedOnce = useRef(false)
   const [replacedNotice, setReplacedNotice] = useState(!!arrivedOver)
   const firstPick = useRef(`${fixed.join()}|${exclude.join()}|${count}`)
   useEffect(() => {
     if (`${fixed.join()}|${exclude.join()}|${count}` !== firstPick.current) setReplacedNotice(false)
   }, [fixed.join(), exclude.join(), count])
-  const reasonFor = (id: number, r: BestOfReason | undefined): string => (!r ? '' : proposedSet.has(id) && r.kind === 'yours' ? ASSISTANT_PICK : reasonText(r))
+  const reasonFor = (id: number, r: BestOfReason | undefined): string =>
+    !r ? '' : proposedSet.has(id) && !readded.includes(id) && r.kind === 'yours' ? ASSISTANT_PICK : reasonText(r)
 
-  useEffect(() => onStateChange?.({ edited, made: made !== null }), [edited, made])
+  useEffect(() => onStateChange?.({ edited, made: made !== null || approvedOnce.current }), [edited, made])
   useEffect(() => {
-    if (proposal && !made) api.reportProposal(proposal.proposalId, { kind: 'edited', edited })
+    if (proposal && !approvedOnce.current) api.reportProposal(proposal.proposalId, { kind: 'edited', edited })
   }, [edited])
   // Leaving the screen closes the proposal (a decision already made stands). Checked a tick later,
   // so React's development double mount doesn't close it.
@@ -244,6 +249,7 @@ export function BestOfView({
     try {
       const ids = view.photos.map((p) => p.id)
       const album = await api.makeBestOfAlbum(source, ids)
+      approvedOnce.current = true
       setMade(album)
       if (proposal) api.reportProposal(proposal.proposalId, { kind: 'approved', albumId: album.id, name: album.name, photoIds: ids })
       onMade()
@@ -416,6 +422,7 @@ export function BestOfView({
                   className="tile"
                   onClick={() => {
                     setFixed((f) => [...f, p.id])
+                    if (proposedSet.has(p.id)) setReadded((r) => [...r, p.id])
                     setExclude((e) => e.filter((x) => x !== p.id))
                     setCount(Math.min(view.total, view.count + 1)) // adding makes the pick one bigger
                     setAdding(false)

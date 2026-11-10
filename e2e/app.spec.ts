@@ -1128,8 +1128,10 @@ test('best of (AC-2, AC-3, AC-6): the Best of view offers a similar photo to swa
     await choices.first().click()
     await expect(strip).toHaveCount(0)
     await expect(tileCount()).toHaveCount(12) // a swap keeps the count
-    const after = await tileCount().evaluateAll((els) => els.map((e) => e.querySelector('img')!.getAttribute('src')))
-    expect(after).not.toEqual(before)
+    // The new pick arrives after the click; the count is the same before and after, so wait for the photos to change.
+    await expect
+      .poll(() => tileCount().evaluateAll((els) => els.map((e) => e.querySelector('img')!.getAttribute('src'))), { timeout: 10_000 })
+      .not.toEqual(before)
     await expect(page.locator('.tile .stack-badge').first()).toBeVisible()
   })
 })

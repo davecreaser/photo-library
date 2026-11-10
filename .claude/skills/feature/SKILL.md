@@ -52,6 +52,6 @@ Done when every acceptance criterion passes with named evidence.
 
 Set the spec's `Status: done`, push the branch, and open a PR: summary, the acceptance criteria as a checklist with their evidence, screenshots for UI changes, link to the spec (and `Closes #N`).
 
-Then watch CI to the end (`gh run watch`). If it fails, read the failing logs, fix, push, and watch again. Failures that only happen on another OS or in CI's environment (locale, no GPU, path limits, timing) are real findings: fix the cause, not just the test.
+Then watch CI to the end (`gh run watch`). CI runs Linux only on PRs; if the change is platform-sensitive (paths, sockets/pipes, native modules, file permissions), also run Windows by hand once it's green on Linux: `gh workflow run CI --ref <branch> -f os=windows-latest`. Actions minutes are limited: push once when ready, not commit by commit. If it fails, read the failing logs, fix, push, and watch again. Failures that only happen on another OS or in CI's environment (locale, no GPU, path limits, timing) are real findings: fix the cause, not just the test.
 
-Done when CI is green on every OS; give the user the link. The user reviews and merges.
+Done when CI is green (Linux, plus Windows for platform-sensitive changes); give the user the link. The user reviews and merges.

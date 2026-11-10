@@ -29,7 +29,7 @@ Tests that touch a photo folder snapshot it before and after (excluding `.DS_Sto
 
 - `node:sqlite`, not a native SQLite module (ADR 0005). Nothing uses the network at runtime (ADR 0003).
 - Imports use explicit `.ts` extensions so `node --test` can run main-process code directly; avoid TS syntax type-stripping can't handle (enums, parameter properties, namespaces).
-- Cross-platform: CI runs macOS, Windows and Linux. Split paths on both separators, compare paths with `path.relative`, and give every macOS-only tool a fallback.
+- Cross-platform: the app supports macOS, Windows and Linux (CI: Linux on every PR; Windows and macOS by hand, see below). Split paths on both separators, compare paths with `path.relative`, and give every macOS-only tool a fallback.
 - Tests use generated photos only (`e2e/library.ts`, test helpers); never real ones. Move/copy files "as the user" with `test/helpers.ts`, which runs outside the guard.
 - Check: `npm run typecheck && npm test && npm run e2e`.
 
@@ -41,7 +41,7 @@ Ideas start as the owner's plain words: `/idea <words>` (`.claude/skills/idea/`)
 
 Headless version (`.github/workflows/agent.yml`): on an `idea` issue the owner comments `approved` (spec + design posted, label `spec-ready`), then `go` (build, review, QA, PR; label `pr-ready`), or `revise: …`, or `approved, no spec` for small changes. On a PR that has fallen behind main or conflicts with it, `update` merges main in, resolves the conflicts (renumbering a clashing schema version or spec), and re-checks. Only the owner's comments trigger it.
 
-Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merging PRs. Several features can be in flight at once, each its own PR against `main` (no stacked PRs); merge main in rather than rebasing. CI runs Linux + Windows on PRs and `feat/**` pushes; macOS on `main` and manual runs.
+Agents push feature branches only; `.claude/hooks/block-dangerous-git.sh` blocks pushes to main, force-pushes and merging PRs. Several features can be in flight at once, each its own PR against `main` (no stacked PRs); merge main in rather than rebasing. CI is kept lean because Actions minutes are limited: it runs Linux only, on ready (non-draft) PRs that change code, never on pushes or on main. Windows and macOS run by hand (`gh workflow run CI --ref <branch> -f os=windows-latest`, or `macos-latest`/`all`) only when a change is platform-sensitive (paths, sockets/pipes, native modules, file permissions); say so in the PR. Push once when the work is ready, not after every commit.
 
 ## Working with the owner
 

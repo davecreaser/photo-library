@@ -1,6 +1,6 @@
 # 0008: Assistant access
 
-Status: approved
+Status: done
 Issue: #49 (connect and read) and #50 (make albums), built together; epic #55
 
 ## Problem

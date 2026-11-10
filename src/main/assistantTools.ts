@@ -116,7 +116,10 @@ function validDate(v: unknown, field: string): string | undefined {
 
 function integer(v: unknown, field: string, min: number, max: number): number | undefined {
   if (v === undefined || v === null) return undefined
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) throw new ToolError(`${field} must be a whole number from ${min} to ${max}.`)
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max)
+    throw new ToolError(
+      max === Number.MAX_SAFE_INTEGER ? `${field} must be a whole number of at least ${min}.` : `${field} must be a whole number from ${min} to ${max}.`
+    )
   return v
 }
 
@@ -199,7 +202,12 @@ export class AssistantTools {
       per_year: db.photosPerYear(),
       albums,
       people,
-      content_analysis: this.ctx.contentProgress().phase === 'unavailable' ? 'unavailable' : `analysed ${analysis.done} of ${analysis.total}`
+      content_analysis:
+        this.ctx.contentProgress().phase === 'unavailable'
+          ? 'unavailable'
+          : analysis.total === 0 && counts.photoCount > 0
+            ? 'not started yet'
+            : `analysed ${analysis.done} of ${analysis.total}`
     }
   }
 

@@ -1390,7 +1390,9 @@ export class LibraryDb {
 
   /** The album with this name, ignoring case, if any. */
   albumNamed(name: string): { id: number; name: string } | null {
-    const r = this.db.prepare('SELECT id, name FROM albums WHERE lower(name) = lower(?) ORDER BY id LIMIT 1').get(name) as Row | undefined
+    // In JS, not SQLite's lower(), which only folds ASCII: "Kraków" and "KRAKÓW" are the same name.
+    const rows = this.db.prepare('SELECT id, name FROM albums ORDER BY id').all() as Row[]
+    const r = rows.find((x) => (x.name as string).localeCompare(name, undefined, { sensitivity: 'accent' }) === 0)
     return r ? { id: r.id as number, name: r.name as string } : null
   }
 

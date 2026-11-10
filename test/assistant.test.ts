@@ -479,7 +479,7 @@ test('AC-3: when the app is unreachable the relay answers within 2 s, stays up, 
   await lib.close()
 })
 
-test('AC-3, AC-5: a relay with an out-of-date token reports it', async () => {
+test('AC-3, AC-5: a relay with an out-of-date or missing token reports it', async () => {
   const lib = await setup()
   const env = envOf(lib)
   await lib.access.forget()
@@ -487,6 +487,9 @@ test('AC-3, AC-5: a relay with an out-of-date token reports it', async () => {
   const init = await r.rpc({ id: 1, ...INIT })
   assert.equal(init.error.message, SETUP_OUT_OF_DATE)
   r.proc.kill()
+  const noToken = relay({ ...env, PHOTO_LIBRARY_TOKEN: '' })
+  assert.equal((await noToken.rpc({ id: 1, ...INIT })).error.message, SETUP_OUT_OF_DATE)
+  noToken.proc.kill()
   await lib.close()
 })
 
@@ -662,10 +665,13 @@ test('AC-12: create_album makes a top-level marked album, refuses duplicates, an
   assert.equal(lib.albumsChanged, 1, 'the window is told')
   assert.match((await c.tool('create_album', { name: 'beach DAYS' })).error, new RegExp(`already exists \\(id ${made.album_id}\\)`))
   assert.match((await c.tool('create_album', { name: 'norway' })).error, /An album called "Norway" already exists/)
+  await c.tool('create_album', { name: 'Kraków' })
+  assert.match((await c.tool('create_album', { name: 'KRAKÓW' })).error, /An album called "Kraków" already exists/, 'case is ignored beyond ASCII')
+  assert.equal((await c.tool('create_album', { name: 'Krakow' })).name, 'Krakow', 'accents still count')
   assert.match((await c.tool('create_album', { name: '   ' })).error, /^name must be 1-100 characters/)
   assert.match((await c.tool('create_album', { name: 'x'.repeat(101) })).error, /^name must be 1-100 characters/)
   assert.match((await c.tool('create_album', { name: 'Big', photo_ids: Array.from({ length: 1001 }, (_, i) => i + 1) })).error, /at most 1000 ids/)
-  assert.equal(lib.db.listAlbums().length, 2)
+  assert.equal(lib.db.listAlbums().length, 4, 'Norway, Beach days, Kraków, Krakow')
   c.end()
   await lib.close()
 })
@@ -704,6 +710,39 @@ test('AC-12: add and remove work only on assistant albums, report what changed, 
   assert.match((await c.tool('add_to_album', { album_id: 777, photo_ids: [ids[0]] })).error, /There is no album with id 777/)
   assert.match((await c.tool('add_to_album', { album_id })).error, /photo_ids is required/)
   c.end()
+  await lib.close()
+})
+
+test('AC-12, AC-14: ids of missing and ignored-folder photos are never listed or added, and are reported as not found', async () => {
+  const lib = await setup()
+  const kept = lib.add(2)
+  const [hidden] = lib.add(1, { folder: 'private' })
+  const [gone] = lib.add(1, { folder: 'gone' })
+  const c = await client(lib)
+  const album = await c.tool('create_album', { name: 'Kept', photo_ids: [kept[0], gone] })
+  assert.equal(album.added, 2)
+  // The file goes missing (as a scan would find), and the private folder is ignored (ADR 0007).
+  const raw = new DatabaseSync(join(lib.dir, 'library.db'))
+  raw.prepare('UPDATE files SET missing = 1 WHERE photo_id = ?').run(gone)
+  raw.close()
+  lib.db.forgetFiles((p) => p.split('/').includes('private'))
+  lib.db.refreshDerived()
+
+  const all = await c.tool('search_photos', { limit: 200 })
+  assert.deepEqual(all.photos.map((p: { id: number }) => p.id).sort(), [...kept].sort())
+  const overview = await c.tool('library_overview')
+  assert.equal(overview.photos, 2)
+  assert.equal(overview.albums.find((a: { id: number }) => a.id === album.album_id).photos, 1)
+  const second = await c.tool('create_album', { name: 'Second', photo_ids: [kept[1], hidden, gone] })
+  assert.deepEqual([second.added, second.not_found], [1, [hidden, gone]])
+  const add = await c.tool('add_to_album', { album_id: album.album_id, photo_ids: [hidden, gone] })
+  assert.deepEqual([add.added, add.not_found], [0, [hidden, gone]])
+  assert.equal(lib.db.idsInAlbum(album.album_id, [hidden]).size, 0)
+  // A missing photo already in the album can still be taken out.
+  assert.equal((await c.tool('remove_from_album', { album_id: album.album_id, photo_ids: [gone] })).removed, 1)
+  c.end()
+  await c.closed
+  assert.ok(!c.raw.includes('private') && !c.raw.includes('gone'), 'no folder names')
   await lib.close()
 })
 

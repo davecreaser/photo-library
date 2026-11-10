@@ -6,6 +6,8 @@
 import { connect, type Socket } from 'node:net'
 
 const UNREACHABLE = "Photo Library isn't reachable. Open Photo Library and turn on assistant access, then try again."
+// The same words as the app's answer to a wrong token (assistantServer.ts): the relay imports nothing from the app.
+const OUT_OF_DATE = "This assistant's setup is out of date: copy it again from Photo Library's settings"
 const CONNECT_MS = 1500
 const REPLAY_ID = 'photo-library-relay-initialize'
 
@@ -113,7 +115,7 @@ function startConnect(): void {
   connecting = true
   if (!address || !token) {
     connecting = false
-    return failAll(UNREACHABLE)
+    return failAll(OUT_OF_DATE)
   }
   const s = connect(address)
   socket = s

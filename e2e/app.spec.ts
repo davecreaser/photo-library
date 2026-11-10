@@ -1484,3 +1484,53 @@ test('assistant access (spec 0008): off by default; the shown setup connects; al
     a.proc.kill()
   }
 })
+
+test('assistant access (spec 0008, AC-6, AC-7): forgetting in the dialog cuts off the old setup; a data folder too long for a socket says why and the app works on', async () => {
+  await chooseLibrary()
+  const footer = page.locator('.sidebar-footer')
+  await footer.getByRole('button', { name: 'Assistant access…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Assistant access' })
+  const toggle = dialog.getByLabel('Let AI assistants use this library')
+  await toggle.check()
+  const oldJson = (await dialog.getByLabel('Claude Desktop setup').textContent())!
+  const a = assistantFrom(oldJson)
+  try {
+    expect((await a.tool('library_overview')).photos).toBe(lib.uniquePhotos)
+    await dialog.getByRole('button', { name: 'Forget connected assistants…' }).click()
+    await dialog.getByRole('button', { name: 'Forget', exact: true }).click()
+    await expect(dialog.getByText('Done. Copy the setup again')).toBeVisible()
+    await expect(dialog.getByLabel('Claude Desktop setup')).not.toHaveText(oldJson)
+    expect((await a.tool('library_overview')).rpcError).toBe("This assistant's setup is out of date: copy it again from Photo Library's settings")
+    const b = assistantFrom((await dialog.getByLabel('Claude Desktop setup').textContent())!)
+    try {
+      expect((await b.tool('library_overview')).photos).toBe(lib.uniquePhotos)
+    } finally {
+      b.proc.kill()
+    }
+  } finally {
+    a.proc.kill()
+  }
+  await dialog.getByRole('button', { name: 'Done' }).click()
+
+  // A Unix socket path has a length limit (named pipes don't).
+  if (process.platform === 'win32') return
+  await app.close()
+  rmSync(dataDir, { recursive: true, force: true })
+  dataDir = mkdtempSync(join(tmpdir(), `pl-e2e-${'long'.repeat(25)}-`))
+  await launch(lib.root, NO_MODELS())
+  await chooseLibrary()
+  // Locators belong to the old window: look again in the new one.
+  const footer2 = page.locator('.sidebar-footer')
+  const dialog2 = page.getByRole('dialog', { name: 'Assistant access' })
+  const toggle2 = dialog2.getByLabel('Let AI assistants use this library')
+  await footer2.getByRole('button', { name: 'Assistant access…' }).click()
+  await toggle2.check()
+  await expect(dialog2.getByText("Couldn't start assistant access: the app's data folder path is too long for this system.")).toBeVisible()
+  await expect(toggle2).not.toBeChecked()
+  await expect(footer2.getByRole('button', { name: "Assistant access (couldn't start)…" })).toBeVisible()
+  await dialog2.getByRole('button', { name: 'Done' }).click()
+  await expect(footer2.getByRole('button', { name: 'Assistant access…' })).toBeVisible()
+  // The rest of the app works normally.
+  await expect(page.locator('.scan-status')).toContainText(`${lib.uniquePhotos} photos`)
+  await expect(page.locator('.grid .tile')).toHaveCount(lib.uniquePhotos)
+})

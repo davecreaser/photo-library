@@ -70,6 +70,62 @@ Terms. **Assistant access** is the setting. The **server** is the MCP server ins
 
 ## Design
 
+**Where it lives.** A new link at the end of the sidebar footer's settings links, after "Best of settings…": **"Assistant access…"**, or **"Assistant access (on)…"** while it's on, so the owner can always see at a glance that it's on. It opens an "Assistant access" modal dialog built like the Best of settings dialog (`LeanDialog`): a `label.toggle` checkbox, `hint` paragraphs, `error` paragraphs, a "Done" button. Assistant albums are marked in the sidebar's album list (below). Nothing else in the window changes.
+
+**Dialog states.** Title "Assistant access" in every state. Under it, always, the switch and the explanation:
+
+- Switch: **"Let AI assistants use this library"**
+- Explanation (`hint`): "An AI assistant such as Claude can search this library and make albums of its own. It sees capture dates, album names, people's names and favourites, and may send them to its company's servers. It never sees the photos themselves, file or folder names, places, or anything in an ignored folder, and it can't change your files or your own albums."
+
+1. _Off (default, AC-1)._ The switch and explanation only. Button "Done".
+2. _Starting (AC-1)._ The switch shows ticked and is disabled; a `hint` beside it reads "Starting…". Usually too brief to see (under 1 second).
+3. _On (AC-1, AC-2, AC-7)._ The switch ticked. Below it, heading (h3) **"Set up an assistant"**, then:
+   - Hint: "Needs Node.js 22.18 or later on this computer. The text below includes a secret key for this library: keep it private, like a password."
+   - Sub-heading **"Claude Desktop"**, hint: "In Claude Desktop, open Settings › Developer › Edit Config and add this. If the file already lists other servers, add only the "photo-library" entry inside its "mcpServers". Then restart Claude Desktop."
+   - A read-only code block (monospace, selectable, scrolls sideways rather than wrapping) with the full JSON, `mcpServers` wrapper included; button **"Copy"**.
+   - Sub-heading **"Claude Code"**, hint: "Run this once in a terminal:"; a code block with the `claude mcp add` command (wraps, since it's one line); button **"Copy"**.
+   - The token appears only inside the two snippets, exactly as copied; it is never shown on its own or masked (what's shown is what's pasted, AC-2).
+   - Then the forget control (below) and, as a closing `hint`: "Turning this off or forgetting assistants stops their access at once. What an assistant has already read stays with it."
+   - Button "Done".
+4. _Couldn't start (AC-6)._ The switch is off and enabled; under it an `error` paragraph: **"Couldn't start assistant access: {reason}."** with these reasons:
+   - another copy of the app on the same data folder: "another Photo Library window is using it. Quit that one, then turn it on here"
+   - path too long: "the app's data folder path is too long for this system"
+   - permissions: "the app couldn't set up its own assistant folder (permission denied)"
+   - anything else: "something went wrong inside the app"
+     The rest of the app works as normal. Ticking the switch again retries; the error clears when it starts. If it fails at app launch (setting was on), the setting is saved as off, the footer link reads **"Assistant access (couldn't start)…"** in the error colour, and the dialog shows the same error until the owner opens it and closes it, or turns it on successfully.
+5. _Different photo folder (AC-1, Decision 9)._ Choosing a different folder with "Change folder…" turns access off with no prompt (the safe direction): the footer link goes back to "Assistant access…" and the dialog opens in state 1. The token is kept, so turning it on for the new library makes the assistants already set up work again without copying anything; the assistant meanwhile gets the relay's "Open Photo Library and turn on assistant access" message.
+
+Empty library (folder chosen, no photos yet): the switch works the same; the assistant gets the AC-9 note. There is no settings link before a folder is chosen (the Welcome screen has no sidebar). Very large libraries change nothing in the dialog.
+
+**Forget connected assistants (AC-7).** A button **"Forget connected assistants…"** under the snippets. The app confirms forget-type actions inline ("Forget them…", "Forget name…"), so this does too: the button is replaced by a `hint` and two buttons:
+
+- "Forget every connected assistant? They lose access now and need setting up again with the new text above. Your photos and albums are not affected." **"Forget"** (danger) **"Cancel"**.
+- After Forget, the snippets show the new token and a `hint` replaces the button for as long as the dialog stays open: "Done. Copy the setup again into each assistant you still want to use." The button returns the next time the dialog is opened.
+
+**Assistant albums in the sidebar (AC-13).** An album the assistant made shows a small muted pill **"AI"** after its name, before the count (same muted colour and size as the count; the name truncates first). Tooltip on the pill and the row: "Made by an AI assistant. It becomes yours when you rename it, move it, or add or remove photos." In the album's own view the header has a `subtitle` with the same sentence. Everything else about the row is unchanged: hover actions, drag, "Move to…", delete with the existing inline confirm ("Delete album "X"? Photos stay on disk."), which undoes everything the assistant did to it. A new or changed assistant album appears in the list, with its count, within 1 second of the call, with no toast; if it is the open view, its grid refreshes in place, keeping the selection and scroll. An empty assistant album shows count 0 like any empty album.
+
+As soon as the owner renames it, moves it (drag or "Move to…"), or adds or removes photos (selection bar, viewer), the pill and subtitle disappear on the same refresh and it's an ordinary album. Nothing else (opening it, starring its photos, making a sub-album inside it, saving copies) counts as a change. No undo for the change of ownership: there's nothing to undo, since the album is unchanged except by the owner's own edit.
+
+**Interactions.** The footer link opens the dialog; Esc, clicking the backdrop or "Done" closes it (focus returns to the link). Space toggles the switch. Unticking takes effect at once, with no confirm (it's the safe direction); the setup block disappears. "Copy" puts the snippet on the clipboard and reads **"Copied"** for 2 seconds; if the clipboard fails it reads "Couldn't copy" and the owner can select the text in the block by hand. Enter on a focused "Forget" confirms; Esc or "Cancel" backs out. The clipboard needs a new preload call (the renderer has none today).
+
+**Copy for the assistant** (errors, notes, tool descriptions) is fixed by AC-3, AC-5, AC-7, AC-8, AC-9, AC-11 and AC-12 and is not repeated here.
+
+**Traceability.**
+
+| AC            | Satisfied by                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| AC-1          | Footer link; states 1–3; switch copy and explanation; state 5 (folder change turns it off)                         |
+| AC-2          | State 3: the two snippets with "Copy", token only inside them                                                      |
+| AC-3          | No UI; relay message (state 5 mentions what the assistant sees)                                                    |
+| AC-4          | No UI (tests)                                                                                                      |
+| AC-5          | No UI; token only in snippets (state 3)                                                                            |
+| AC-6          | State 4, including the "another window" reason and the launch failure link                                         |
+| AC-7          | Unticking (Interactions); "Forget connected assistants…" with inline confirm                                       |
+| AC-8 to AC-12 | No UI (assistant-facing copy in the ACs)                                                                           |
+| AC-13         | "AI" pill, tooltip and album subtitle; live refresh; becomes ordinary on the owner's edit; delete as for any album |
+| AC-14         | Explanation copy (what it sees, may leave the computer, never sees); state 3 closing hint                          |
+| AC-15         | No new UI; live refresh doesn't reload the window                                                                  |
+
 ## Open questions
 
 1. **Can the assistant change the owner's own albums?** _Recommended: no. `add_to_album` and `remove_from_album` work only on albums the assistant made and the owner hasn't changed since._ Undo then stays "delete the album", with no activity list needed. The cost: "add these to my Norway album" isn't possible in this version; the assistant makes a new album instead.
@@ -110,3 +166,4 @@ Terms. **Assistant access** is the setting. The **server** is the MCP server ins
   12. No paid gating now.
   13. Windows: check during the build that the named pipe refuses remote clients; if it can't, the token is the guard and the ADR says so.
       AC-15's 100k-photo budgets are kept.
+- 2026-11-10, the owner's design answers (all as recommended): assistant albums get a muted "AI" text label; an album becomes the owner's when they rename it, move it, or add or remove photos (no "Keep as mine" button); access turns off quietly at a failed launch or a change of photo folder (saved as off, shown by the footer link); the Claude Code command uses `--scope user`.

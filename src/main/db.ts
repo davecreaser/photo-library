@@ -16,7 +16,7 @@ import { VECTOR_SCHEMA, VectorStore } from './vectorStore.ts'
 import type { BestOfPhoto } from './bestOf.ts'
 import { qualityScore } from './quality.ts'
 
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS albums (
   id INTEGER PRIMARY KEY,
   parent_id INTEGER REFERENCES albums (id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- 'assistant' while an album made through assistant access is unchanged by the owner (spec 0008).
+  made_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS album_photos (
@@ -284,6 +286,10 @@ export class LibraryDb {
         this.db.exec('ALTER TABLE photos ADD COLUMN faces_version INTEGER')
       }
       this.db.exec(SCHEMA)
+      // v7 -> v8: albums.made_by (spec 0008).
+      if (!this.db.prepare("SELECT 1 FROM pragma_table_info('albums') WHERE name = 'made_by'").get()) {
+        this.db.exec('ALTER TABLE albums ADD COLUMN made_by TEXT')
+      }
       // v6 -> v7: photo_quality (spec 0006) is created by SCHEMA above; photos are measured in the background.
       // v5 -> v6: offer_declines (spec 0005) is created by SCHEMA above.
       // v4 -> v5: content analysis (spec 0002). Every present photo gets analysed.
@@ -570,6 +576,19 @@ export class LibraryDb {
       baseParams.push(month)
     }
     if (filter.undated) base.push('p.taken_at IS NULL')
+    if (filter.from) {
+      base.push('p.taken_at >= ?')
+      baseParams.push(filter.from)
+    }
+    if (filter.to) {
+      // Inclusive: every time on the last day sorts before the next day.
+      base.push('p.taken_at < ?')
+      baseParams.push(filter.to + 'T24')
+    }
+    for (const id of filter.personIds ?? []) {
+      base.push('p.id IN (SELECT photo_id FROM faces WHERE person_id = ?)')
+      baseParams.push(id)
+    }
     if (filter.favorites) base.push('p.favorite = 1')
     if (filter.albumId != null) {
       base.push('p.id IN (SELECT photo_id FROM album_photos WHERE album_id = ?)')
@@ -1290,7 +1309,7 @@ export class LibraryDb {
   listAlbums(): Album[] {
     const rows = this.db
       .prepare(
-        `SELECT a.id, a.parent_id, a.name, count(p.id) AS photo_count,
+        `SELECT a.id, a.parent_id, a.name, a.made_by, count(p.id) AS photo_count,
            EXISTS (SELECT 1 FROM suggestion_decisions d WHERE d.album_id = a.id) AS from_suggestion
          FROM albums a
          LEFT JOIN album_photos ap ON ap.album_id = a.id
@@ -1303,7 +1322,8 @@ export class LibraryDb {
       parentId: (r.parent_id as number) ?? null,
       name: r.name as string,
       photoCount: r.photo_count as number,
-      fromSuggestion: !!r.from_suggestion
+      fromSuggestion: !!r.from_suggestion,
+      madeByAssistant: r.made_by === 'assistant'
     }))
   }
 
@@ -1312,8 +1332,16 @@ export class LibraryDb {
     return { id: r.id as number, parentId, name, photoCount: 0 }
   }
 
+  /** The owner changed the album: an assistant album becomes theirs (spec 0008, AC-13). */
+  private claimAlbum(id: number): void {
+    this.db.prepare('UPDATE albums SET made_by = NULL WHERE id = ? AND made_by IS NOT NULL').run(id)
+  }
+
   renameAlbum(id: number, name: string): void {
-    this.db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, id)
+    this.transaction(() => {
+      this.db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, id)
+      this.claimAlbum(id)
+    })
   }
 
   /** Moves an album under `parentId` (null = top level). Refuses itself, its descendants and unknown targets. */
@@ -1326,7 +1354,10 @@ export class LibraryDb {
         at = ((this.db.prepare('SELECT parent_id FROM albums WHERE id = ?').get(at) as Row | undefined)?.parent_id as number | null) ?? null
       }
     }
-    this.db.prepare('UPDATE albums SET parent_id = ? WHERE id = ?').run(parentId, id)
+    this.transaction(() => {
+      this.db.prepare('UPDATE albums SET parent_id = ? WHERE id = ?').run(parentId, id)
+      this.claimAlbum(id)
+    })
     return true
   }
 
@@ -1340,11 +1371,119 @@ export class LibraryDb {
 
   addToAlbum(albumId: number, photoIds: number[]): void {
     const stmt = this.db.prepare('INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)')
-    this.transaction(() => photoIds.forEach((pid) => stmt.run(albumId, pid)))
+    this.transaction(() => {
+      photoIds.forEach((pid) => stmt.run(albumId, pid))
+      this.claimAlbum(albumId)
+    })
   }
 
   removeFromAlbum(albumId: number, photoIds: number[]): void {
     const stmt = this.db.prepare('DELETE FROM album_photos WHERE album_id = ? AND photo_id = ?')
+    this.transaction(() => {
+      photoIds.forEach((pid) => stmt.run(albumId, pid))
+      this.claimAlbum(albumId)
+    })
+  }
+
+  // --- assistant albums (spec 0008): the assistant's changes never claim the album ---
+
+  /** The album with this name, ignoring case, if any. */
+  albumNamed(name: string): { id: number; name: string } | null {
+    const r = this.db.prepare('SELECT id, name FROM albums WHERE lower(name) = lower(?) ORDER BY id LIMIT 1').get(name) as Row | undefined
+    return r ? { id: r.id as number, name: r.name as string } : null
+  }
+
+  albumInfo(id: number): { id: number; name: string; madeByAssistant: boolean } | null {
+    const r = this.db.prepare('SELECT id, name, made_by FROM albums WHERE id = ?').get(id) as Row | undefined
+    return r ? { id: r.id as number, name: r.name as string, madeByAssistant: r.made_by === 'assistant' } : null
+  }
+
+  /** Of `ids`, those that are present photos (forgotten, ignored and missing photos are not). */
+  presentPhotoIds(ids: number[]): Set<number> {
+    const rows = this.db.prepare('SELECT id FROM photos WHERE present = 1 AND id IN (SELECT value FROM json_each(?))').all(JSON.stringify(ids)) as Row[]
+    return new Set(rows.map((r) => r.id as number))
+  }
+
+  /** Of `ids`, those already in the album. */
+  idsInAlbum(albumId: number, ids: number[]): Set<number> {
+    const rows = this.db
+      .prepare('SELECT photo_id FROM album_photos WHERE album_id = ? AND photo_id IN (SELECT value FROM json_each(?))')
+      .all(albumId, JSON.stringify(ids)) as Row[]
+    return new Set(rows.map((r) => r.photo_id as number))
+  }
+
+  createAssistantAlbum(name: string, photoIds: number[]): number {
+    return this.transaction(() => {
+      const id = (this.db.prepare("INSERT INTO albums (name, parent_id, made_by) VALUES (?, NULL, 'assistant') RETURNING id").get(name) as Row).id as number
+      this.assistantAlbumChange(id, photoIds, 'add')
+      return id
+    })
+  }
+
+  /** For assistant results: the named people and the albums of each photo. Nothing else about it. */
+  peopleAndAlbums(ids: number[]): Map<number, { people: string[]; albums: { id: number; name: string }[] }> {
+    const out = new Map(ids.map((id) => [id, { people: [] as string[], albums: [] as { id: number; name: string }[] }]))
+    const json = JSON.stringify(ids)
+    const people = this.db
+      .prepare(
+        `SELECT DISTINCT f.photo_id, pe.name FROM faces f JOIN people pe ON pe.id = f.person_id
+         WHERE f.photo_id IN (SELECT value FROM json_each(?)) ORDER BY pe.name COLLATE NOCASE`
+      )
+      .all(json) as Row[]
+    for (const r of people) out.get(r.photo_id as number)?.people.push(r.name as string)
+    const albums = this.db
+      .prepare(
+        `SELECT ap.photo_id, a.id, a.name FROM album_photos ap JOIN albums a ON a.id = ap.album_id
+         WHERE ap.photo_id IN (SELECT value FROM json_each(?)) ORDER BY a.name COLLATE NOCASE`
+      )
+      .all(json) as Row[]
+    for (const r of albums) out.get(r.photo_id as number)?.albums.push({ id: r.id as number, name: r.name as string })
+    return out
+  }
+
+  /** Every album with its present photo count and capture date span (spec 0008, AC-9). */
+  albumsOverview(): {
+    id: number
+    name: string
+    parentId: number | null
+    photoCount: number
+    first: string | null
+    last: string | null
+    madeByAssistant: boolean
+  }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT a.id, a.name, a.parent_id, a.made_by, count(p.id) AS n, min(p.taken_at) AS first, max(p.taken_at) AS last
+         FROM albums a LEFT JOIN album_photos ap ON ap.album_id = a.id LEFT JOIN photos p ON p.id = ap.photo_id AND p.present = 1
+         GROUP BY a.id ORDER BY a.name COLLATE NOCASE`
+      )
+      .all() as Row[]
+    return rows.map((r) => ({
+      id: r.id as number,
+      name: r.name as string,
+      parentId: (r.parent_id as number) ?? null,
+      photoCount: r.n as number,
+      first: (r.first as string) ?? null,
+      last: (r.last as string) ?? null,
+      madeByAssistant: r.made_by === 'assistant'
+    }))
+  }
+
+  /** Present dated photos per capture year, oldest first. */
+  photosPerYear(): { year: string; photos: number }[] {
+    const rows = this.db
+      .prepare('SELECT substr(taken_at, 1, 4) AS y, count(*) AS n FROM photos WHERE present = 1 AND taken_at IS NOT NULL GROUP BY y ORDER BY y')
+      .all() as Row[]
+    return rows.map((r) => ({ year: r.y as string, photos: r.n as number }))
+  }
+
+  /** Adds or removes photos without claiming the album. The caller checks it is an assistant album. */
+  assistantAlbumChange(albumId: number, photoIds: number[], change: 'add' | 'remove'): void {
+    const stmt = this.db.prepare(
+      change === 'add'
+        ? 'INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)'
+        : 'DELETE FROM album_photos WHERE album_id = ? AND photo_id = ?'
+    )
     this.transaction(() => photoIds.forEach((pid) => stmt.run(albumId, pid)))
   }
 

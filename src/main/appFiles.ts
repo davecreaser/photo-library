@@ -3,8 +3,8 @@
 // with assertWritable() on top of the process-wide guard in fsGuard.ts.
 // test/safety.test.ts fails if any other source file uses a write/delete API.
 import { execFile } from 'node:child_process'
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { assertWritable, grantExportRoot, revokeExportRoot } from './fsGuard.ts'
 
@@ -55,6 +55,48 @@ export async function ensureAppDir(dir: string): Promise<void> {
 export async function writeAppFile(file: string, data: Buffer): Promise<void> {
   assertWritable(file, 'write')
   await writeFile(file, data)
+}
+
+// --- assistant access (spec 0008) ---
+
+const posix = process.platform !== 'win32'
+
+/** Creates an app-owned folder only the owner can open (0700 on macOS/Linux). */
+export async function ensurePrivateDir(dir: string): Promise<void> {
+  assertWritable(dir, 'create folder')
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  if (posix) await chmod(dir, 0o700)
+}
+
+/** Writes an app-owned file only the owner can read (0600 on macOS/Linux). */
+export async function writePrivateFile(file: string, data: string): Promise<void> {
+  assertWritable(file, 'write')
+  await writeFile(file, data, { mode: 0o600 })
+  if (posix) await chmod(file, 0o600)
+}
+
+/** Makes the assistant socket owner-only (0600). No-op on Windows, where it's a named pipe. */
+export async function makeSocketPrivate(file: string): Promise<void> {
+  if (!posix) return
+  assertWritable(file, 'change permissions')
+  await chmod(file, 0o600)
+}
+
+/**
+ * Removes a socket file left behind by a crash: only a socket, only inside a folder called
+ * `assistant`. The caller has checked nothing answers on it.
+ */
+export async function removeStaleSocket(file: string): Promise<void> {
+  if (basename(dirname(file)) !== 'assistant') throw new Error(`Not an assistant socket: ${file}`)
+  let isSocket: boolean
+  try {
+    isSocket = (await lstat(file)).isSocket()
+  } catch {
+    return
+  }
+  if (!isSocket) throw new Error(`Not a socket: ${file}`)
+  assertWritable(file, 'delete')
+  await rm(file, { force: true })
 }
 
 /** Deletes files in an app-owned folder whose names match. Never recursive, never follows into other folders. */

@@ -42,6 +42,8 @@ export interface Album {
   photoCount: number
   /** True when made from suggested albums (deleting it brings them back). */
   fromSuggestion?: boolean
+  /** Made through assistant access and not changed by the owner since (spec 0008). */
+  madeByAssistant?: boolean
 }
 
 export interface Tag {
@@ -151,6 +153,11 @@ export interface PhotoFilter {
   favorites?: boolean
   personId?: number
   undated?: boolean
+  /** Capture dates 'YYYY-MM-DD', inclusive (spec 0008); undated photos never match. */
+  from?: string
+  to?: string
+  /** Photos showing every one of these people (spec 0008). */
+  personIds?: number[]
   /** Free text, e.g. "august 2020 spain". Parsed by parseSearch(). */
   text?: string
   offset?: number
@@ -249,6 +256,16 @@ export type ExportResult =
 export interface ExportProgress {
   done: number
   total: number
+}
+
+/** Assistant access (spec 0008), as settings shows it. */
+export interface AssistantStatus {
+  state: 'off' | 'starting' | 'on' | 'failed'
+  /** Why it couldn't start (state 'failed'). */
+  reason?: string
+  /** While on: the setup to copy (they contain the token). */
+  desktopJson?: string
+  claudeCommand?: string
 }
 
 export interface Api {

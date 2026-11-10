@@ -159,7 +159,7 @@ As soon as the owner renames it, moves it (drag or "Move to…"), or adds or rem
   5. The relay gets the token from an environment variable in the assistant's config, so "Forget connected assistants" really cuts it off.
   6. "Forget connected assistants" is in this version.
   7. The relay reconnects transparently; if the app was closed at startup, the error says to open it and reconnect.
-  8. The pinned `@modelcontextprotocol/sdk` server core runs in the app with our own socket transport; the relay doesn't use it.
+  8. ~~The pinned `@modelcontextprotocol/sdk`~~ Changed during the build (owner, 2026-11-10): the MCP protocol (initialize, ping, tools/list, tools/call over newline-delimited JSON-RPC) is hand-written in the app. The SDK would have added 17 dependencies, including the express and hono web servers, an HTTP client and cross-spawn, to an app that promises no network.
   9. Choosing a different photo folder turns access off.
   10. Photo details sent: date and time to the minute, people, albums, favourite stars. No tags, cameras or places.
   11. The ADR is 0011 (0010 is taken).

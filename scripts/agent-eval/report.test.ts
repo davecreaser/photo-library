@@ -21,6 +21,8 @@ const run = (task: string, n: number, outcome: RunResult['outcome'], o: Partial<
 test('AC-9: cost from the price table; unknown models are never guessed', () => {
   // 1000*2 + 500*10 + 20000*0.2 + 4000*2.5 = 21000 / 1e6
   assert.equal(estimateCost('claude-sonnet-5-5', { input: 1000, output: 500, cacheRead: 20_000, cacheWrite: 4000 }), 0.021)
+  // 1-hour cache writes (Claude Code's) cost 2x input: 4000 at $4/MTok.
+  assert.equal(estimateCost('claude-sonnet-5-5', { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 4000 }), 0.016)
   assert.equal(estimateCost('claude-made-up', { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }), null)
 })
 

@@ -3,7 +3,7 @@
 // By hand only:  node scripts/agent-eval/run.ts --help
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -11,7 +11,7 @@ import { fingerprint } from '../../e2e/library.ts'
 import { App, MAIN, Mcp, Owner } from './app.ts'
 import { albumsIn, cacheKey, ensureDir, generate, isEvalLibrary, seed, truthFrom } from './library.ts'
 import { PROXY_CAVEAT, TASKS, jaccard, pickChecks, type AlbumState, type Proposal, type RunState, type Task, type Truth } from './tasks.ts'
-import { PRICES, comparable, estimateCost, makeBaseline, markdown, summarise, type Baseline, type RunResult, type Usage } from './report.ts'
+import { PRICES, comparable, estimateCost, makeBaseline, markdown, summarise, usageFrom, type Baseline, type RunResult, type Usage } from './report.ts'
 
 const HERE = import.meta.dirname
 const REPO = resolve(HERE, '..', '..')
@@ -57,13 +57,19 @@ Tasks: ${TASKS.map((t) => t.id).join(', ')}`)
 
 const runs = Number(opt.runs)
 if (!Number.isInteger(runs) || runs < 1 || runs > 10) die('--runs must be a whole number from 1 to 10.')
-const maxTurns = Number(opt['max-turns'])
-const maxBudget = Number(opt['max-budget-usd'])
-const budget = Number(opt.budget)
+const positive = (flag: string): number => {
+  const n = Number(opt[flag as keyof typeof opt])
+  if (!Number.isFinite(n) || n <= 0) die(`--${flag} must be a number above 0.`)
+  return n
+}
+const maxTurns = positive('max-turns')
+const maxBudget = positive('max-budget-usd')
+const budget = positive('budget')
 const model = opt.model!
 const unknown = (opt.task ?? []).filter((id) => !TASKS.some((t) => t.id === id))
 if (unknown.length) die(`Unknown task ${unknown.join(', ')}. The tasks are: ${TASKS.map((t) => t.id).join(', ')}.`)
 const tasks = opt.task?.length ? TASKS.filter((t) => opt.task!.includes(t.id)) : TASKS
+if (opt['save-baseline'] && tasks.length !== TASKS.length) die('--save-baseline needs every task: leave out --task.')
 const worstCase = tasks.length * runs * maxBudget
 
 // --- AC-1: the dry run needs no app, no model and no network ---
@@ -88,16 +94,16 @@ const authMode: 'api-key' | 'login' = process.env.ANTHROPIC_API_KEY ? 'api-key' 
 console.log(`Model ${model} · claude ${cliVersion} · ${authMode === 'api-key' ? 'API key (--bare)' : 'your Claude login'} · ${runs} runs per task`)
 console.log(`Worst case $${worstCase.toFixed(2)} (${tasks.length} tasks × ${runs} runs × $${maxBudget} per run).`)
 if (worstCase > budget && !opt.yes) die(`That is over the $${budget} budget. Pass --yes to run anyway, or fewer --runs or --task.`)
-const realUserData = join(homedir(), 'Library', 'Application Support', 'photo-library')
-const appCommit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim()
+const appCommit = execFileSync('git', ['describe', '--always', '--dirty'], { cwd: REPO, encoding: 'utf8' }).trim()
 
 // --- AC-2: the eval library and template, cached by version ---
 async function buildTemplate(): Promise<void> {
   console.log('Building the eval library and template (once per version; up to 15 minutes)…')
-  rmSync(CACHE, { recursive: true, force: true })
+  // Past reports and transcripts stay.
+  for (const p of [PHOTOS, TEMPLATE, join(CACHE, 'truth.json'), join(CACHE, 'key.txt')]) rmSync(p, { recursive: true, force: true })
   ensureDir(PHOTOS)
   await generate(PHOTOS)
-  const app = await App.launch(TEMPLATE, PHOTOS)
+  const app = await launch(TEMPLATE, PHOTOS)
   try {
     await app.page.getByRole('button', { name: 'Choose photo folder…' }).click()
     await app.settled(562, 15 * 60_000)
@@ -107,7 +113,7 @@ async function buildTemplate(): Promise<void> {
   await seed(join(TEMPLATE, 'library.db'), PHOTOS)
   const truth = truthFrom(join(TEMPLATE, 'library.db'), PHOTOS)
   // Check the template does what the tasks rely on.
-  const check = await App.launch(TEMPLATE)
+  const check = await launch(TEMPLATE)
   try {
     await check.settled(truth.photos, 5 * 60_000)
     const red = (await check.page.evaluate(() => window.api.queryPhotos({ text: 'red 2025', limit: 20 } as never))) as { photos: { id: number }[] }
@@ -125,6 +131,39 @@ async function buildTemplate(): Promise<void> {
   console.log('Eval library ready.')
 }
 
+// --- shared run state, and Ctrl-C (AC-8: the partial report is still written) ---
+const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+const OUT = join(CACHE, 'reports', stamp)
+const results: RunResult[] = []
+let toolsHash = ''
+let current: { app?: App; mcp?: Mcp; claude?: ReturnType<typeof spawn>; tmp?: string } = {}
+let stopping = false
+
+function onSigint(): void {
+  if (stopping) process.exit(130)
+  stopping = true
+  console.log('\nStopping: closing the app and writing the partial report…')
+  void cleanUp().then(() => finish(true).then(() => process.exit(130)))
+}
+process.on('SIGINT', onSigint)
+
+/**
+ * Launches the app on `dataDir`. Playwright adds its own Ctrl-C handler, which would exit before the
+ * partial report is written: it is removed (Playwright still closes Electron when the eval exits).
+ * Also checks the app really uses `dataDir` (AC-3), so the owner's own data folder is never touched.
+ */
+async function launch(dataDir: string, pickFolder?: string): Promise<App> {
+  const app = await App.launch(dataDir, pickFolder)
+  for (const l of process.listeners('SIGINT')) if (l !== onSigint) process.off('SIGINT', l as () => void)
+  const used = await app.app.evaluate(({ app: a }) => a.getPath('userData'))
+  const real = (p: string) => (existsSync(p) ? realpathSync(p) : resolve(p))
+  if (real(used) !== real(dataDir)) {
+    await app.close()
+    die(`The app used ${used}, not the eval's data folder: refusing to run.`)
+  }
+  return app
+}
+
 const key = cacheKey()
 if (!existsSync(join(CACHE, 'key.txt')) || readFileSync(join(CACHE, 'key.txt'), 'utf8') !== key) {
   if (existsSync(join(CACHE, 'key.txt'))) console.log('The cached eval library is from older versions: rebuilding it.')
@@ -135,32 +174,35 @@ const truth: Truth = JSON.parse(readFileSync(join(CACHE, 'truth.json'), 'utf8'))
 const before: AlbumState[] = albumsIn(join(TEMPLATE, 'library.db'))
 
 // --- the runs ---
-const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-const OUT = ensureDir(join(CACHE, 'reports', stamp))
-const results: RunResult[] = []
-let toolsHash = ''
-let current: { app?: App; mcp?: Mcp; claude?: ReturnType<typeof spawn>; tmp?: string } = {}
-let stopping = false
+ensureDir(OUT)
 
-async function cleanUp(): Promise<void> {
-  current.claude?.kill('SIGKILL')
-  current.mcp?.close()
-  await current.app?.close()
-  if (current.tmp && !opt.keep) rmSync(current.tmp, { recursive: true, force: true })
+let cleaning: Promise<void> = Promise.resolve()
+
+/**
+ * Stops the run's processes and removes its folder. Ctrl-C and the interrupted run both call it, so
+ * each call takes what is current and queues behind any cleanup under way: the folder is removed
+ * only once the app has fully closed (it writes until then), and every caller waits for all of it.
+ */
+function cleanUp(): Promise<void> {
+  const c = current
   current = {}
+  cleaning = cleaning.then(async () => {
+    c.claude?.kill('SIGKILL')
+    c.mcp?.close()
+    await c.app?.close()
+    if (c.tmp && !opt.keep) rmSync(c.tmp, { recursive: true, force: true })
+    // Kept runs stay in the system temp folder: the cache path can be too long for the app's socket.
+    else if (c.tmp) console.log(`(kept ${c.tmp})`)
+  })
+  return cleaning
 }
-
-process.on('SIGINT', () => {
-  if (stopping) process.exit(130)
-  stopping = true
-  console.log('\nStopping: closing the app and writing the partial report…')
-  void cleanUp().then(() => finish(true).then(() => process.exit(130)))
-})
 
 interface Stream {
   init?: { tools: string[]; mcp_servers: { name: string; status: string }[] }
   toolCalls: number
   turns: number
+  /** Usage per assistant message (the CLI sends one event per content block, with the message's usage). */
+  usage: Map<string, any>
   result?: any
   /** propose_selection calls: input and the proposal id from the result. */
   proposals: Map<number, { albumId: number; photoIds: number[] }>
@@ -197,7 +239,7 @@ function runClaude(
   for (const k of Object.keys(env)) if (k.startsWith('CLAUDE_CODE') || k === 'CLAUDECODE') delete env[k]
   const child = spawn('claude', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
   current.claude = child
-  const stream: Stream = { toolCalls: 0, turns: 0, proposals: new Map() }
+  const stream: Stream = { toolCalls: 0, turns: 0, usage: new Map(), proposals: new Map() }
   const pending = new Map<string, { albumId: number; photoIds: number[] }>()
   let capped: string | null = null
   let isolation: string | null = null
@@ -227,12 +269,18 @@ function runClaude(
           const extraTools = (m.tools as string[]).filter((t) => !want.includes(t))
           const missing = want.filter((t) => !(m.tools as string[]).includes(t))
           const servers = (m.mcp_servers as { name: string }[]).map((s) => s.name).filter((n) => n !== 'photo-library')
-          if (extraTools.length || missing.length || servers.length) {
+          const ours = (m.mcp_servers as { name: string; status: string }[]).find((s) => s.name === 'photo-library')
+          if (!extraTools.length && !servers.length && ours?.status !== 'connected') {
+            isolation = `the Photo Library server didn't connect (${ours?.status ?? 'not listed'})`
+            child.kill('SIGKILL')
+          } else if (extraTools.length || missing.length || servers.length) {
             isolation = `isolation failed: ${[...extraTools, ...servers.map((s) => `server ${s}`), ...missing.map((t) => `missing ${t}`)].join(', ')}`
             child.kill('SIGKILL')
           }
         } else if (m.type === 'assistant') {
-          stream.turns++
+          const id = m.message?.id ?? `event ${stream.usage.size}`
+          stream.usage.set(id, m.message?.usage)
+          stream.turns = stream.usage.size
           for (const b of m.message?.content ?? []) {
             if (b.type !== 'tool_use') continue
             stream.toolCalls++
@@ -297,12 +345,11 @@ async function oneRun(task: Task, n: number): Promise<RunResult | 'stop'> {
   const tmp = mkdtempSync(join(tmpdir(), 'pl-agent-eval-'))
   current.tmp = tmp
   const data = join(tmp, 'data')
-  if (resolve(data) === resolve(realUserData)) die('Refusing to use the real app data folder.')
   cpSync(TEMPLATE, data, { recursive: true })
   const work = ensureDir(join(tmp, 'work'))
   let outcome: RunResult
   try {
-    const app = (current.app = await App.launch(data))
+    const app = (current.app = await launch(data))
     await app.settled(truth.photos, 3 * 60_000)
     const entry = await app.accessOn()
     const socket = entry.env.PHOTO_LIBRARY_SOCKET
@@ -322,12 +369,20 @@ async function oneRun(task: Task, n: number): Promise<RunResult | 'stop'> {
     const c = await runClaude(task, mcpConfig, work, transcript)
     await owner?.finish(8000)
     const r = c.stream.result
-    const usage: Usage = {
-      input: r?.usage?.input_tokens ?? 0,
-      output: r?.usage?.output_tokens ?? 0,
-      cacheRead: r?.usage?.cache_read_input_tokens ?? 0,
-      cacheWrite: r?.usage?.cache_creation_input_tokens ?? 0
-    }
+    if (stopping) throw new Error('stopped by Ctrl-C')
+    // The result's totals; without a result (the eval stopped claude at the turn cap), the messages' own.
+    const usage: Usage = r?.usage
+      ? usageFrom(r.usage)
+      : [...c.stream.usage.values()].map(usageFrom).reduce(
+          (a, u) => ({
+            input: a.input + u.input,
+            output: a.output + u.output,
+            cacheRead: a.cacheRead + u.cacheRead,
+            cacheWrite: a.cacheWrite + u.cacheWrite,
+            cacheWrite1h: a.cacheWrite1h! + u.cacheWrite1h!
+          }),
+          { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0 }
+        )
     Object.assign(base, {
       toolCalls: c.stream.toolCalls,
       turns: r?.num_turns ?? c.stream.turns,
@@ -385,6 +440,7 @@ async function oneRun(task: Task, n: number): Promise<RunResult | 'stop'> {
 }
 
 async function finish(partial: boolean): Promise<void> {
+  if (!results.length) return console.log('No runs finished: no report.')
   const summaries = summarise(
     tasks.map((t) => t.id),
     results
@@ -422,6 +478,7 @@ for (const task of tasks) {
     if (r === 'stop') process.exit(2)
     results.push(r)
     console.log(`${r.outcome}${r.outcome === 'pass' ? '' : `: ${r.reason}`} (${r.toolCalls} tool calls, ${r.seconds}s)`)
+    if (stopping) await new Promise(() => {}) // the Ctrl-C handler writes the report and exits
     if (r.reason.startsWith('isolation failed')) {
       console.error('Stopping: the model saw tools other than Photo Library’s, so no run would be a fair test.')
       await finish(true)

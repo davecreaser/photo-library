@@ -1,7 +1,7 @@
 // The eval's numbers (spec 0010, AC-8 to AC-10, AC-15): estimated cost, the per-task table, the
 // committed baseline and the comparison with it. Pure, so it's tested without a model.
 
-/** $ per million tokens; cache reads cost 0.1x input, 5-minute cache writes 1.25x. */
+/** $ per million tokens; cache reads cost 0.1x input, 5-minute cache writes 1.25x, 1-hour cache writes 2x. */
 export const PRICES: Record<string, { input: number; output: number }> = {
   'claude-opus-5-5': { input: 4, output: 20 },
   'claude-sonnet-5-5': { input: 2, output: 10 }
@@ -11,14 +11,27 @@ export interface Usage {
   input: number
   output: number
   cacheRead: number
+  /** 5-minute cache writes. */
   cacheWrite: number
+  /** 1-hour cache writes (what Claude Code uses). */
+  cacheWrite1h?: number
+}
+
+/** All input tokens, however they were billed. */
+export const inputTokens = (u: Usage): number => u.input + u.cacheRead + u.cacheWrite + (u.cacheWrite1h ?? 0)
+
+/** Usage from an API usage object (a result event or an assistant message). */
+export function usageFrom(u: any): Usage {
+  const writes = u?.cache_creation_input_tokens ?? 0
+  const h1 = u?.cache_creation?.ephemeral_1h_input_tokens ?? 0
+  return { input: u?.input_tokens ?? 0, output: u?.output_tokens ?? 0, cacheRead: u?.cache_read_input_tokens ?? 0, cacheWrite: writes - h1, cacheWrite1h: h1 }
 }
 
 /** Estimated cost in dollars, or null for a model not in the table (never guessed). */
 export function estimateCost(model: string, u: Usage): number | null {
   const p = PRICES[model]
   if (!p) return null
-  return (u.input * p.input + u.output * p.output + u.cacheRead * p.input * 0.1 + u.cacheWrite * p.input * 1.25) / 1e6
+  return (u.input * p.input + u.output * p.output + u.cacheRead * p.input * 0.1 + u.cacheWrite * p.input * 1.25 + (u.cacheWrite1h ?? 0) * p.input * 2) / 1e6
 }
 
 export interface RunResult {
@@ -48,6 +61,8 @@ export interface TaskSummary {
   input: number
   output: number
   cost: number | null
+  /** Median seconds per run. */
+  seconds: number
 }
 
 export const median = (xs: number[]): number => {
@@ -69,9 +84,10 @@ export function summarise(taskIds: string[], runs: RunResult[]): TaskSummary[] {
       valid: valid.length,
       invalid: mine.length - valid.length,
       toolCalls: { median: median(calls), min: calls.length ? Math.min(...calls) : 0, max: calls.length ? Math.max(...calls) : 0 },
-      input: median(valid.map((r) => r.usage.input + r.usage.cacheRead + r.usage.cacheWrite)),
+      input: median(valid.map((r) => inputTokens(r.usage))),
       output: median(valid.map((r) => r.usage.output)),
-      cost: costs.some((c) => c === null) ? null : median(costs as number[])
+      cost: costs.some((c) => c === null) ? null : median(costs as number[]),
+      seconds: median(valid.map((r) => r.seconds))
     }
   })
 }
@@ -148,7 +164,7 @@ export function markdown(r: ReportInput): string {
     if (r.baseline.cliVersion !== r.cliVersion) lines.push(`Different CLI version: baseline ${r.baseline.cliVersion}.`, '')
   }
   lines.push(`${r.runsPerTask} runs per task: a difference of one run is noise; use --runs 5 or more before deciding.`, '')
-  const head = ['Task', 'Passed', 'Invalid', 'Tool calls', 'Input', 'Output', 'Cost']
+  const head = ['Task', 'Passed', 'Invalid', 'Tool calls', 'Input', 'Output', 'Cost', 'Time']
   if (r.baseline) head.push('Baseline')
   lines.push(`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`)
   for (const s of r.summaries) {
@@ -159,7 +175,8 @@ export function markdown(r: ReportInput): string {
       `${s.toolCalls.median} (${s.toolCalls.min}–${s.toolCalls.max})`,
       k(s.input),
       k(s.output),
-      money(s.cost)
+      money(s.cost),
+      `${s.seconds}s`
     ]
     if (r.baseline) {
       const b = r.baseline.tasks[s.task]
@@ -175,11 +192,12 @@ export function markdown(r: ReportInput): string {
   const passed = valid.filter((x) => x.outcome === 'pass').length
   const costs = r.runs.map((x) => x.cost)
   const total = costs.some((c) => c === null) ? null : (costs as number[]).reduce((a, b) => a + b, 0)
-  const tokens = r.runs.reduce((a, x) => a + x.usage.input + x.usage.output + x.usage.cacheRead + x.usage.cacheWrite, 0)
+  const tokens = r.runs.reduce((a, x) => a + inputTokens(x.usage) + x.usage.output, 0)
+  const seconds = r.runs.reduce((a, x) => a + x.seconds, 0)
   const cli = r.runs.reduce((a, x) => a + (x.cliCost ?? 0), 0)
   lines.push(
     '',
-    `Passed ${passed} of ${valid.length} valid runs${valid.length ? ` (${Math.round((100 * passed) / valid.length)}%)` : ''}. Tokens ${k(tokens)}. Estimated cost ${money(total)}${cli ? ` (CLI says $${cli.toFixed(2)})` : ''}.`
+    `Passed ${passed} of ${valid.length} valid runs${valid.length ? ` (${Math.round((100 * passed) / valid.length)}%)` : ''}. Tokens ${k(tokens)}. Estimated cost ${money(total)}${cli ? ` (CLI says $${cli.toFixed(2)})` : ''}. Time ${Math.round(seconds / 60)} min, including any wait the CLI spent on rate limits (not reported separately).`
   )
   const withPicks = r.runs.filter((x) => x.picks?.length)
   if (withPicks.length) {

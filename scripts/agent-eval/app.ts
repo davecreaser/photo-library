@@ -60,7 +60,7 @@ export class App {
 /** The eval's own MCP connection, over the relay exactly as an assistant runs it. */
 export class Mcp {
   private proc: ChildProcess
-  private waiting = new Map<number, (m: any) => void>()
+  private waiting = new Map<number, { resolve: (m: any) => void; reject: (e: Error) => void }>()
   private id = 0
 
   constructor(entry: McpEntry) {
@@ -72,8 +72,14 @@ export class Mcp {
       while ((at = buf.indexOf('\n')) >= 0) {
         const m = JSON.parse(buf.slice(0, at))
         buf = buf.slice(at + 1)
-        this.waiting.get(m.id)?.(m)
+        this.waiting.get(m.id)?.resolve(m)
       }
+    })
+    // A relay that dies (Ctrl-C reaches it too) fails the calls waiting on it, never the eval.
+    this.proc.stdin!.on('error', () => {})
+    this.proc.on('exit', () => {
+      for (const w of this.waiting.values()) w.reject(new Error('the relay stopped'))
+      this.waiting.clear()
     })
   }
 
@@ -81,10 +87,18 @@ export class Mcp {
     return new Promise((resolve, reject) => {
       const id = ++this.id
       const t = setTimeout(() => reject(new Error(`no answer to ${method}`)), 30_000)
-      this.waiting.set(id, (m) => {
-        clearTimeout(t)
-        resolve(m)
+      this.waiting.set(id, {
+        resolve: (m) => {
+          clearTimeout(t)
+          this.waiting.delete(id)
+          resolve(m)
+        },
+        reject: (e) => {
+          clearTimeout(t)
+          reject(e)
+        }
       })
+      if (this.proc.exitCode !== null || this.proc.signalCode !== null) return reject(new Error('the relay stopped'))
       this.proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
     })
   }

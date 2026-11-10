@@ -1,6 +1,6 @@
 # 0010: Assistant access: evals
 
-Status: approved
+Status: done
 Issue: #51; epic #55
 
 ## Problem
@@ -124,3 +124,9 @@ Traceability: US-1 → AC-1, AC-2, AC-3, AC-4, AC-5, AC-8. US-2 → AC-10. US-3 
   - Claude Code 2.1.322 has no `--max-turns`, so the runner counts assistant turns in the stream and stops `claude` at the cap (graded as a fail, like the budget cap).
   - Proposals are read from the stream (each `propose_selection` call and its result), then their status asked of the app with `proposal_status` on the eval's own connection.
   - An API error from Claude (a usage limit, an outage) makes the run invalid, not a fail, quoting Claude's message; a usage limit or login error (429, 401, 403) stops the eval, since every later run would fail the same way.
+- 2026-11-10, after review:
+  - Turns are counted per assistant message (the CLI sends one event per content block); a run the eval stops at the turn cap has no result event, so its tokens are summed from the messages.
+  - Cost estimates price 1-hour cache writes (what Claude Code uses) at 2x input, 5-minute ones at 1.25x.
+  - `--keep` leaves the run's folder in the system temp folder, not the cache (AC-12): the cache path can be too long for the app's socket. The path is printed.
+  - AC-14: the report gives each task's median time and the total; time the CLI spends waiting on rate limits isn't visible in its stream, so it isn't reported separately.
+  - `--save-baseline` needs every task, so a baseline is never partial.

@@ -17,7 +17,7 @@ export function cacheKey(): string {
   const read = (p: string) => readFileSync(join(ROOT, p), 'utf8')
   const grab = (file: string, name: string) => read(file).match(new RegExp(`${name} = (\\d+)`))?.[1] ?? '?'
   const parts = [
-    `generator ${GENERATOR_VERSION} ${createHash('sha256').update(read('scripts/agent-eval/library.ts')).digest('hex').slice(0, 12)}`,
+    `generator ${GENERATOR_VERSION} ${createHash('sha256').update(read('scripts/agent-eval/library.ts')).update(read('e2e/library.ts')).digest('hex').slice(0, 12)}`,
     `schema ${grab('src/main/db.ts', 'SCHEMA_VERSION')}`,
     `content ${grab('src/main/contentModel.ts', 'CONTENT_MODEL_VERSION')}`,
     `face ${grab('src/main/faces.ts', 'FACE_MODEL_VERSION')}`,

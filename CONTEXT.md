@@ -105,3 +105,16 @@ _Avoid_: auto-tagged, suggested face
 
 **Offer** (new photos for an album):
 Photos that turned up after an album was made from a suggestion, inside its dates or in its folder. Shown in Suggested albums as "N new photos for Sintra"; the user adds them or says "Not these" (remembered by photo). Never added automatically; hand-made albums get none.
+
+**Best of**:
+The app's pick of a few photos from an album or suggested album that tell its story (about 10%, adjustable). Computed on demand, never stored; the user can swap, remove and add, then **Make album** to keep it as a plain album ("Best of Sintra"). Chosen from technical quality and the user's own signals (stars, albums, tags, named people, words typed in "Focus on…"), never by a model judging beauty.
+_Avoid_: highlights, favourites (favourites are only the user's stars)
+
+**Look-alikes**:
+Photos of the same scene taken close together (very similar content, within 10 minutes). Computed from content vectors, never stored; at most one of a group is in a Best of pick.
+
+**Moment**:
+A run of photos close in time and scene (a lunch, a viewpoint). Computed, never shown as an album; Best of gives each moment a share of the pick.
+
+**Quality score**:
+A number from 0 to 1 per photo from sharpness, exposure and face size, measured once in the background analysis pass (`photo_quality`, `QUALITY_VERSION`).

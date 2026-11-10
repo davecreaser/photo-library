@@ -23,6 +23,7 @@ interface Props {
   onAlbumsChanged: () => void
   onShowCorrections: () => void
   onShowIgnored: () => void
+  onShowBestOf: () => void
 }
 
 const api = window.api
@@ -42,7 +43,8 @@ export function Sidebar({
   onChangeBase,
   onAlbumsChanged,
   onShowCorrections,
-  onShowIgnored
+  onShowIgnored,
+  onShowBestOf
 }: Props) {
   const [openYears, setOpenYears] = useState<Set<string>>(new Set())
   // Which album is being created under (null = top level), renamed, or confirmed for deletion.
@@ -351,6 +353,9 @@ export function Sidebar({
         </button>
         <button className="link" onClick={onShowIgnored}>
           Ignored folders…
+        </button>
+        <button className="link" onClick={onShowBestOf}>
+          Best of settings…
         </button>
         <div className="base-path" title={library.basePath ?? ''}>
           📂 {library.basePath}

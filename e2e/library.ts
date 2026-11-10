@@ -117,3 +117,58 @@ export async function createManyFoldersLibrary(folders: number): Promise<Library
   }
   return { root, uniquePhotos: folders }
 }
+
+export interface TripLibrary extends Library {
+  clusters: number
+  perCluster: number
+  singles: number
+}
+
+const TRIP_SHAPES = ['circle', 'rect', 'triangle', 'stripes', 'cross']
+
+/** One generated scene: `scene` picks colours and shapes, `jitter` shifts the foreground a few pixels (same scene, another shot). */
+async function scenePhoto(path: string, scene: number, jitter: number, date: string, description: string): Promise<void> {
+  const hue = (scene * 67) % 360
+  const shape = TRIP_SHAPES[scene % TRIP_SHAPES.length]
+  const size = 40 + ((scene * 13) % 50)
+  const ox = 60 + ((scene * 37) % 140)
+  const oy = 50 + ((scene * 53) % 100)
+  const fg = `hsl(${(hue + 180) % 360},70%,${30 + ((scene * 7) % 40)}%)`
+  const body =
+    shape === 'circle'
+      ? `<circle cx="${ox + jitter}" cy="${oy}" r="${size}" fill="${fg}"/>`
+      : shape === 'rect'
+        ? `<rect x="${ox + jitter}" y="${oy}" width="${size * 2}" height="${size}" fill="${fg}"/>`
+        : shape === 'triangle'
+          ? `<polygon points="${ox + jitter},${oy - size} ${ox + size},${oy + size} ${ox - size},${oy + size}" fill="${fg}"/>`
+          : shape === 'stripes'
+            ? [0, 1, 2, 3, 4].map((k) => `<rect x="${20 + k * 55 + jitter}" y="0" width="${10 + size / 3}" height="240" fill="${fg}"/>`).join('')
+            : `<rect x="${ox + jitter}" y="20" width="30" height="200" fill="${fg}"/><rect x="40" y="${oy + jitter}" width="240" height="30" fill="${fg}"/>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="hsl(${hue},45%,${30 + ((scene * 11) % 40)}%)"/>${body}</svg>`
+  mkdirSync(dirname(path), { recursive: true })
+  const exif = { IFD0: { ImageDescription: description }, IFD2: { DateTimeOriginal: date } }
+  await sharp(Buffer.from(svg)).withExif(exif).jpeg().toFile(path)
+}
+
+/**
+ * A trip (spec 0006) in a folder named "sintra_week": `clusters` scenes shot `perCluster` times a
+ * minute apart (near-identical, so look-alikes exist when the content model is present) plus
+ * `singles` one-off scenes, all at least 2 hours apart, over several days.
+ */
+export async function createTripLibrary(clusters = 4, perCluster = 5, singles = 10): Promise<TripLibrary> {
+  const root = mkdtempSync(join(tmpdir(), 'pl-e2e-trip-'))
+  const stamp = (slot: number, minute: number) =>
+    `2026:05:${String(10 + Math.floor(slot / 6)).padStart(2, '0')} ${String(8 + (slot % 6) * 2).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`
+  let slot = 0
+  // Interleave: a cluster after every few singles, so the trip is not all bursts.
+  for (let c = 0; c < clusters; c++) {
+    for (let i = 0; i < perCluster; i++) await scenePhoto(join(root, 'sintra_week', `S${c}_${i}.JPG`), c, i * 2, stamp(slot, i), `trip ${c}.${i}`)
+    slot++
+    for (let k = 0; k < Math.ceil(singles / clusters) && c * Math.ceil(singles / clusters) + k < singles; k++) {
+      const id = c * Math.ceil(singles / clusters) + k
+      await scenePhoto(join(root, 'sintra_week', `One${id}.JPG`), 100 + id * 3, 0, stamp(slot, 0), `trip single ${id}`)
+      slot++
+    }
+  }
+  return { root, uniquePhotos: clusters * perCluster + singles, clusters, perCluster, singles }
+}

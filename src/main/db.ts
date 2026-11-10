@@ -13,8 +13,10 @@ import type { FaceVector, KnownPerson } from './faceGroups.ts'
 import { correctedTime, correctionApplies, type Correction } from './dates.ts'
 import type { EventGroup } from './events.ts'
 import { VECTOR_SCHEMA, VectorStore } from './vectorStore.ts'
+import type { BestOfPhoto } from './bestOf.ts'
+import { qualityScore } from './quality.ts'
 
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -149,6 +151,15 @@ CREATE TABLE IF NOT EXISTS offer_declines (
 );
 CREATE INDEX IF NOT EXISTS offer_declines_photo ON offer_declines (photo_id);
 
+-- Technical quality of each photo (spec 0006), measured in the analysis pass. A row with NULL
+-- measurements means the photo couldn't be read (it isn't retried until QUALITY_VERSION changes).
+CREATE TABLE IF NOT EXISTS photo_quality (
+  photo_id INTEGER PRIMARY KEY REFERENCES photos (id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  sharpness REAL,
+  exposure REAL
+);
+
 CREATE TABLE IF NOT EXISTS clock_corrections (
   id INTEGER PRIMARY KEY,
   camera TEXT NOT NULL,
@@ -160,6 +171,8 @@ CREATE TABLE IF NOT EXISTS clock_corrections (
 ${VECTOR_SCHEMA}`
 
 type Row = Record<string, unknown>
+
+const asInt8 = (b: Uint8Array): Int8Array => new Int8Array(b.buffer, b.byteOffset, b.byteLength)
 type SqlValue = string | number | null
 
 export interface FileMeta {
@@ -195,6 +208,7 @@ export interface ThumbSource {
 export interface AnalysisSource extends ThumbSource {
   needsFaces: boolean
   needsContent: boolean
+  needsQuality: boolean
 }
 
 /** A search's content part: the phrase's vector and what counts as a match (spec 0002). */
@@ -270,6 +284,7 @@ export class LibraryDb {
         this.db.exec('ALTER TABLE photos ADD COLUMN faces_version INTEGER')
       }
       this.db.exec(SCHEMA)
+      // v6 -> v7: photo_quality (spec 0006) is created by SCHEMA above; photos are measured in the background.
       // v5 -> v6: offer_declines (spec 0005) is created by SCHEMA above.
       // v4 -> v5: content analysis (spec 0002). Every present photo gets analysed.
       if (!this.db.prepare("SELECT 1 FROM pragma_table_info('photos') WHERE name = 'content_version'").get()) {
@@ -766,16 +781,17 @@ export class LibraryDb {
    * Present photos that still need faces and/or content analysed with these versions (null:
    * that analysis isn't running), newest first.
    */
-  photosNeedingAnalysis(versions: { faces: number | null; content: number | null }, limit: number): AnalysisSource[] {
+  photosNeedingAnalysis(versions: { faces: number | null; content: number | null; quality?: number }, limit: number): AnalysisSource[] {
     const faces = versions.faces === null ? '0' : '(p.faces_version IS NULL OR p.faces_version < ?)'
     const content = versions.content === null ? '0' : 'p.content_version IS NOT ?'
-    const params = [versions.faces, versions.content].filter((v) => v !== null)
+    const quality = versions.quality === undefined ? '0' : 'NOT EXISTS (SELECT 1 FROM photo_quality q WHERE q.photo_id = p.id AND q.version = ?)'
+    const params = [versions.faces, versions.content, versions.quality ?? null].filter((v) => v !== null)
     const rows = this.db
       .prepare(
         `SELECT * FROM (
-           SELECT p.id, p.hash, p.orientation, p.taken_at, f.path, ${faces} AS needs_faces, ${content} AS needs_content
+           SELECT p.id, p.hash, p.orientation, p.taken_at, f.path, ${faces} AS needs_faces, ${content} AS needs_content, ${quality} AS needs_quality
            FROM photos p JOIN files f ON f.id = ${PRIMARY_FILE} WHERE p.present = 1
-         ) WHERE needs_faces OR needs_content
+         ) WHERE needs_faces OR needs_content OR needs_quality
          ORDER BY taken_at IS NULL, taken_at DESC, id LIMIT ?`
       )
       .all(...params, limit) as Row[]
@@ -786,7 +802,8 @@ export class LibraryDb {
       ext: extname(r.path as string).toLowerCase(),
       orientation: (r.orientation as number) ?? null,
       needsFaces: !!r.needs_faces,
-      needsContent: !!r.needs_content
+      needsContent: !!r.needs_content,
+      needsQuality: !!r.needs_quality
     }))
   }
 
@@ -807,6 +824,116 @@ export class LibraryDb {
       this.vectors.save(photoId, vector)
       this.db.prepare('UPDATE photos SET content_version = ? WHERE id = ?').run(version, photoId)
     })
+  }
+
+  // --- quality and Best of (spec 0006) ---
+
+  /** Present photos directly in this album. */
+  albumPhotoIds(albumId: number): number[] {
+    const rows = this.db
+      .prepare('SELECT ap.photo_id AS id FROM album_photos ap JOIN photos p ON p.id = ap.photo_id WHERE ap.album_id = ? AND p.present = 1')
+      .all(albumId) as Row[]
+    return rows.map((r) => r.id as number)
+  }
+
+  albumName(albumId: number): string | null {
+    return ((this.db.prepare('SELECT name FROM albums WHERE id = ?').get(albumId) as Row | undefined)?.name as string) ?? null
+  }
+
+  /** Named people and how many present photos of each the whole library has. */
+  libraryPeople(): Map<number, { name: string; libraryPhotos: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT pe.id, pe.name, count(DISTINCT f.photo_id) AS n FROM people pe JOIN faces f ON f.person_id = pe.id
+         JOIN photos p ON p.id = f.photo_id AND p.present = 1 GROUP BY pe.id`
+      )
+      .all() as Row[]
+    return new Map(rows.map((r) => [r.id as number, { name: r.name as string, libraryPhotos: Number(r.n) }]))
+  }
+
+  /** Content vectors of the user's starred photos (for "lean towards what I star"). */
+  starredVectors(): Int8Array[] {
+    const rows = this.db
+      .prepare('SELECT c.embedding FROM content_vectors c JOIN photos p ON p.id = c.photo_id WHERE p.present = 1 AND p.favorite = 1 ORDER BY p.id')
+      .all() as Row[]
+    return rows.map((r) => asInt8(r.embedding as Uint8Array))
+  }
+
+  /** Everything Best of needs to know about these photos (present ones only). */
+  bestOfInputs(photoIds: number[], exceptAlbumId: number | null, qualityVersion: number): BestOfPhoto[] {
+    const out: BestOfPhoto[] = []
+    const CHUNK = 400
+    for (let at = 0; at < photoIds.length; at += CHUNK) {
+      const json = JSON.stringify(photoIds.slice(at, at + CHUNK))
+      const ids = 'SELECT value FROM json_each(?)'
+      const rows = this.db
+        .prepare(
+          `SELECT p.id, p.taken_at, COALESCE(p.favorite, 0) AS fav, q.version AS qv, q.sharpness, q.exposure, c.embedding,
+             EXISTS (SELECT 1 FROM album_photos ap WHERE ap.photo_id = p.id AND ap.album_id IS NOT ?) AS other_album,
+             EXISTS (SELECT 1 FROM photo_tags t WHERE t.photo_id = p.id) AS tagged,
+             (SELECT max(w * h) FROM faces fa WHERE fa.photo_id = p.id) AS biggest
+           FROM photos p LEFT JOIN photo_quality q ON q.photo_id = p.id AND q.version = ?
+             LEFT JOIN content_vectors c ON c.photo_id = p.id
+           WHERE p.present = 1 AND p.id IN (${ids}) ORDER BY p.id`
+        )
+        .all(exceptAlbumId, qualityVersion, json) as Row[]
+      const faces = new Map<number, { personId: number; area: number; central: number }[]>()
+      for (const f of this.db
+        .prepare(`SELECT photo_id, person_id, x, y, w, h FROM faces WHERE person_id IS NOT NULL AND photo_id IN (${ids})`)
+        .all(json) as Row[]) {
+        const w = f.w as number
+        const h = f.h as number
+        const cx = (f.x as number) + w / 2
+        const cy = (f.y as number) + h / 2
+        const central = Math.max(0, 1 - Math.hypot(cx - 0.5, cy - 0.5) / 0.5)
+        const list = faces.get(f.photo_id as number) ?? []
+        list.push({ personId: f.person_id as number, area: w * h, central })
+        faces.set(f.photo_id as number, list)
+      }
+      for (const r of rows) {
+        const measured = r.qv !== null
+        out.push({
+          id: r.id as number,
+          takenAt: (r.taken_at as string) ?? null,
+          quality: !measured
+            ? undefined
+            : r.sharpness === null
+              ? null
+              : qualityScore({ sharpness: r.sharpness as number, exposure: r.exposure as number }, Number(r.biggest ?? 0)),
+          starred: !!r.fav,
+          inOtherAlbum: !!r.other_album,
+          tagged: !!r.tagged,
+          people: faces.get(r.id as number) ?? [],
+          vector: r.embedding ? asInt8(r.embedding as Uint8Array) : null
+        })
+      }
+    }
+    return out
+  }
+
+  /** Content scores (at least `minScore`) of present, analysed photos against a phrase vector. */
+  contentScores(vector: Float32Array, version: number, minScore: number): Map<number, number> {
+    const found = this.vectors.search(vector, minScore, 'p.present = 1 AND p.content_version = ?', [version])
+    return new Map(found.map((m) => [m.id, m.score]))
+  }
+
+  // --- quality (spec 0006) ---
+
+  /** Records a photo's measurements; null when it couldn't be read. */
+  saveQuality(photoId: number, q: { sharpness: number; exposure: number } | null, version: number): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO photo_quality (photo_id, version, sharpness, exposure) VALUES (?, ?, ?, ?)')
+      .run(photoId, version, q?.sharpness ?? null, q?.exposure ?? null)
+  }
+
+  /** Present photos measured with this version, of all present photos. */
+  qualityProgress(version: number): { done: number; total: number } {
+    const r = this.db
+      .prepare(
+        'SELECT count(*) AS total, sum(EXISTS (SELECT 1 FROM photo_quality q WHERE q.photo_id = p.id AND q.version = ?)) AS done FROM photos p WHERE p.present = 1'
+      )
+      .get(version) as Row
+    return { done: Number(r.done ?? 0), total: Number(r.total ?? 0) }
   }
 
   /** Replaces a photo's faces with a fresh analysis. Returns the new face ids, in order. */

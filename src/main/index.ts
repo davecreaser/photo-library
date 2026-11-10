@@ -18,7 +18,18 @@ import { Analysis } from './analysis.ts'
 import { PhotoSearch } from './photoSearch.ts'
 import { ContentModelWorker } from './contentModelWorker.ts'
 import createContentWorker from './contentWorker.ts?nodeWorker'
-import type { ClockCorrection, ExportOptions, ExportResult, ExportSource, ExportSummary, LibraryInfo, PhotoFilter } from '../shared/types.ts'
+import { BestOfService } from './bestOfService.ts'
+import type {
+  BestOfRequest,
+  BestOfSource,
+  ClockCorrection,
+  ExportOptions,
+  ExportResult,
+  ExportSource,
+  ExportSummary,
+  LibraryInfo,
+  PhotoFilter
+} from '../shared/types.ts'
 import { parseSidebarSections, type SidebarSections } from '../shared/sidebarSections.ts'
 
 // photo://thumb/<id> and photo://full/<id> serve images to the UI.
@@ -30,9 +41,18 @@ let organiser: Organiser
 let people: People
 let analysis: Analysis
 let search: PhotoSearch
+let bestOfService: BestOfService
 let window: BrowserWindow | null = null
 let currentScan: Promise<void> | null = null
 let scanAgain = false
+let lastQualityEvent = 0
+/** Tells the window that more photos have been measured (at most every 2 seconds). */
+function sendQualityProgress(): void {
+  const now = Date.now()
+  if (now - lastQualityEvent < 2000) return
+  lastQualityEvent = now
+  window?.webContents.send('bestOf:progress')
+}
 
 // Installed before anything else runs: from here on, no code in this process
 // (ours or a dependency's) can write, move or delete inside a photo folder.
@@ -331,6 +351,12 @@ function registerIpc(): void {
           : undefined
     )
   )
+  ipcMain.handle('bestOf:get', (_e, r: BestOfRequest) => bestOfService.get(r))
+  ipcMain.handle('bestOf:lookalikes', (_e, source: BestOfSource) => bestOfService.lookalikes(source))
+  ipcMain.handle('bestOf:makeAlbum', (_e, source: BestOfSource, ids: number[]) => bestOfService.makeAlbum(source, ids))
+  ipcMain.handle('bestOf:lean', () => bestOfService.leanTowardsStars())
+  ipcMain.handle('bestOf:setLean', (_e, on: boolean) => bestOfService.setLeanTowardsStars(on))
+  ipcMain.handle('photos:byIds', (_e, ids: number[]) => db.photosByIds(ids))
   ipcMain.handle('content:progress', () => analysis.contentProgress())
   ipcMain.handle('photos:get', (_e, id: number) => db.getPhoto(id))
   ipcMain.handle('photos:timeline', () => db.getTimeline())
@@ -410,6 +436,7 @@ app.whenReady().then(() => {
     modelsDir,
     packaged: app.isPackaged,
     onContentProgress: (p) => window?.webContents.send('content:progress', p),
+    onQualityMeasured: () => sendQualityProgress(),
     // The model runs on its own thread: it would otherwise block this one, which also runs the window.
     loadContentModel: (dir) => ContentModelWorker.start(createContentWorker, dir)
   })
@@ -418,6 +445,7 @@ app.whenReady().then(() => {
     () => analysis.contentModel(),
     (e) => analysis.unavailable(e)
   )
+  bestOfService = new BestOfService(db, organiser, search)
   loadProtectedRoots()
   registerPhotoProtocol()
   registerIpc()

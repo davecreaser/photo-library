@@ -24,3 +24,19 @@ export async function decodeForAnalysis(image: string | Buffer, forFaces: boolea
   if (info.channels !== 3) throw new Error(`Unexpected ${info.channels} channels`)
   return { data, width: info.width, height: info.height }
 }
+
+/** Long side of the image quality is measured on (aspect ratio kept, so sharpness means the same for every photo). */
+export const QUALITY_IMAGE_SIDE = 256
+
+/** The photo shrunk to QUALITY_IMAGE_SIDE, upright, as 8-bit RGB: one cheap decode for photos that need only their quality measured. */
+export async function decodeForQuality(image: string | Buffer): Promise<RgbImage> {
+  const { data, info } = await sharp(image, { failOn: 'none' })
+    .rotate()
+    .resize(QUALITY_IMAGE_SIDE, QUALITY_IMAGE_SIDE, { fit: 'inside', withoutEnlargement: true })
+    .removeAlpha()
+    .toColourspace('srgb')
+    .raw({ depth: 'uchar' })
+    .toBuffer({ resolveWithObject: true })
+  if (info.channels !== 3) throw new Error(`Unexpected ${info.channels} channels`)
+  return { data, width: info.width, height: info.height }
+}

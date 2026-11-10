@@ -52,7 +52,8 @@ export class PhotoSearch {
     }
   }
 
-  private async phraseVector(phrase: string): Promise<Float32Array | null> {
+  /** The phrase's content vector, or null when the content model isn't available. */
+  async phraseVector(phrase: string): Promise<Float32Array | null> {
     const cached = this.phrases.get(phrase)
     if (cached) return cached
     const model = await this.model()

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ContentProgress, Photo, PhotoFilter, SearchInfo } from '../../../shared/types.ts'
 import { formatDate, photoCount } from '../format.ts'
 import { dividerLabel, emptySearch, searchHint, searchMeta } from '../searchCopy.ts'
@@ -17,9 +17,23 @@ interface Props {
   /** The search typed, in the search view (spec 0002); null in other views. */
   searchText: string | null
   contentProgress: ContentProgress | null
+  /** Look-alike groups to show as one tile each (spec 0006, AC-8); null shows every photo. */
+  stack?: number[][] | null
+  onOpenGroup?: (ids: number[]) => void
 }
 
-export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhotosLoaded, onOpen, searchText, contentProgress }: Props) {
+export function PhotoGrid({
+  filter,
+  version,
+  selected,
+  onSelectionChange,
+  onPhotosLoaded,
+  onOpen,
+  searchText,
+  contentProgress,
+  stack = null,
+  onOpenGroup
+}: Props) {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -69,7 +83,23 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
     if (version > 0) void load(0, Math.max(photos.length, PAGE), true)
   }, [version])
 
-  useEffect(() => onPhotosLoaded(photos), [photos])
+  // Stacking hides every photo of a group but its best, and badges that one with the group's size.
+  // It only changes what is shown: counts and the album stay as they are.
+  const stacks = useMemo(() => {
+    const lead = new Map<number, number[]>()
+    const hidden = new Set<number>()
+    const loaded = new Set(photos.map((p) => p.id))
+    for (const g of stack ?? []) {
+      // A group is stacked only once its best photo is on screen, so no photo is hidden without its stack.
+      if (!loaded.has(g[0])) continue
+      lead.set(g[0], g)
+      g.slice(1).forEach((id) => hidden.add(id))
+    }
+    return { lead, hidden }
+  }, [stack, photos])
+  const shown = useMemo(() => (stacks.hidden.size === 0 ? photos : photos.filter((p) => !stacks.hidden.has(p.id))), [photos, stacks])
+
+  useEffect(() => onPhotosLoaded(shown), [shown])
 
   // Infinite scroll.
   useEffect(() => {
@@ -94,7 +124,7 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
     const next = new Set(selected)
     if (e.shiftKey && lastClicked.current !== null) {
       const [from, to] = [Math.min(lastClicked.current, index), Math.max(lastClicked.current, index)]
-      for (let i = from; i <= to; i++) next.add(photos[i].id)
+      for (let i = from; i <= to; i++) next.add(shown[i].id)
     } else if (next.has(photo.id)) {
       next.delete(photo.id)
     } else {
@@ -156,10 +186,12 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
           <div className="empty">No photos here yet.</div>
         ))}
       <div className="grid">
-        {photos.map((p, i) => (
+        {shown.map((p, i) => (
           <PhotoTile
             key={p.id}
             photo={p}
+            group={stacks.lead.get(p.id) ?? null}
+            onOpenGroup={onOpenGroup}
             divider={i === dividerAt && info?.phrase ? dividerLabel(info.phrase) : null}
             selected={selected.has(p.id)}
             onClick={(e) => handleClick(e, i, p)}
@@ -174,6 +206,8 @@ export function PhotoGrid({ filter, version, selected, onSelectionChange, onPhot
 
 interface TileProps {
   photo: Photo
+  group: number[] | null
+  onOpenGroup?: (ids: number[]) => void
   /** A row before this tile, spanning the grid: where content matches start. Not a tile, so selection skips it. */
   divider: string | null
   selected: boolean
@@ -181,7 +215,7 @@ interface TileProps {
   onToggle: (e: React.MouseEvent) => void
 }
 
-function PhotoTile({ photo: p, divider, selected, onClick, onToggle }: TileProps) {
+function PhotoTile({ photo: p, group, onOpenGroup, divider, selected, onClick, onToggle }: TileProps) {
   return (
     <>
       {divider && <div className="grid-divider">{divider}</div>}
@@ -191,6 +225,18 @@ function PhotoTile({ photo: p, divider, selected, onClick, onToggle }: TileProps
           {selected ? '✓' : ''}
         </span>
         {p.favorite && <span className="fav-badge">★</span>}
+        {group && onOpenGroup && (
+          <button
+            className="stack-badge"
+            title={`${group.length} similar photos`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenGroup(group)
+            }}
+          >
+            {group.length}
+          </button>
+        )}
       </div>
     </>
   )

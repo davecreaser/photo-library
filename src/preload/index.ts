@@ -2,6 +2,17 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Api, ContentProgress, ExportProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
 
 const api: Api = {
+  getBestOf: (r) => ipcRenderer.invoke('bestOf:get', r),
+  getLookalikes: (source) => ipcRenderer.invoke('bestOf:lookalikes', source),
+  getPhotosByIds: (ids) => ipcRenderer.invoke('photos:byIds', ids),
+  makeBestOfAlbum: (source, ids) => ipcRenderer.invoke('bestOf:makeAlbum', source, ids),
+  onBestOfProgress: (cb) => {
+    const listener = () => cb()
+    ipcRenderer.on('bestOf:progress', listener)
+    return () => ipcRenderer.removeListener('bestOf:progress', listener)
+  },
+  getLeanTowardsStars: () => ipcRenderer.invoke('bestOf:lean'),
+  setLeanTowardsStars: (on) => ipcRenderer.invoke('bestOf:setLean', on),
   exportSummary: (source) => ipcRenderer.invoke('export:summary', source),
   exportCopies: (source, options) => ipcRenderer.invoke('export:start', source, options),
   cancelExport: () => ipcRenderer.invoke('export:cancel'),

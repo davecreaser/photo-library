@@ -7,7 +7,8 @@ import type { People } from './people.ts'
 import type { ImageCache } from './thumbnails.ts'
 import { FACE_MODEL_VERSION, type DetectedFace, type FaceAnalyser } from './faces.ts'
 import { CONTENT_MODEL_VERSION, ContentModel, ContentModelUnavailable, type ContentEncoder } from './contentModel.ts'
-import { decodeForAnalysis, type RgbImage } from './decode.ts'
+import { decodeForAnalysis, decodeForQuality, type RgbImage } from './decode.ts'
+import { measureQuality, QUALITY_VERSION } from './quality.ts'
 import type { ContentProgress } from '../shared/types.ts'
 
 const BATCH = 20
@@ -24,6 +25,8 @@ export interface AnalysisOptions {
   /** True in the installed app (changes the fix shown when the model is unavailable). */
   packaged: boolean
   onContentProgress: (p: ContentProgress) => void
+  /** A photo's quality was just measured (Best of views refresh their "still reading" count from this). */
+  onQualityMeasured?: () => void
   /** Loads the content model; the app runs it on its own thread (ContentModelWorker). Default: on this thread. */
   loadContentModel?: (modelsDir: string) => Promise<ContentEncoder>
 }
@@ -114,8 +117,7 @@ export class Analysis {
   private async pass(): Promise<void> {
     const faces = await this.o.people.analyser()
     const content = await this.contentModel()
-    if (!faces && !content) return
-    const versions = { faces: faces ? FACE_MODEL_VERSION : null, content: content ? CONTENT_MODEL_VERSION : null }
+    const versions = { faces: faces ? FACE_MODEL_VERSION : null, content: content ? CONTENT_MODEL_VERSION : null, quality: QUALITY_VERSION }
     this.doneAt = []
     this.startedAt = Date.now()
     let facesTouched = false
@@ -148,7 +150,22 @@ export class Analysis {
 
   private async analyse(photo: AnalysisSource, faces: FaceAnalyser | null, content: ContentEncoder | null): Promise<void> {
     const forFaces = !!faces && photo.needsFaces
-    const image = await this.decode(photo, forFaces)
+    const forContent = !!content && photo.needsContent
+    // Quality is measured on the 2048px decode when faces need it, otherwise on its own small decode
+    // (the content decode is stretched square, which would make scores depend on which analyses ran).
+    const image = forFaces || forContent ? await this.decode(photo, forFaces) : null
+    if (photo.needsQuality) {
+      // An unreadable photo is recorded so it isn't retried (spec 0006).
+      let q = null
+      try {
+        const source = forFaces ? image : await this.decodeQuality(photo)
+        if (source) q = measureQuality(source)
+      } catch {
+        // unreadable
+      }
+      this.o.db.saveQuality(photo.id, q, QUALITY_VERSION)
+      this.o.onQualityMeasured?.()
+    }
     if (forFaces) {
       let found: DetectedFace[] = []
       try {
@@ -158,7 +175,7 @@ export class Analysis {
       }
       await this.o.people.record(photo.id, found)
     }
-    if (content && photo.needsContent) {
+    if (content && forContent) {
       let vector: Float32Array | null = null
       try {
         if (image) vector = await content.embedImage(image)
@@ -172,6 +189,19 @@ export class Analysis {
       this.doneAt.push(now)
       if (this.doneAt[0] < now - RATE_WINDOW) this.doneAt = this.doneAt.filter((t) => t >= now - RATE_WINDOW)
       this.emit({})
+    }
+  }
+
+  /** The photo shrunk for measuring quality, via the cached preview for formats sharp can't read; null if unreadable. */
+  private async decodeQuality(photo: AnalysisSource): Promise<RgbImage | null> {
+    try {
+      return await decodeForQuality(photo.path)
+    } catch {
+      try {
+        return await decodeForQuality(await this.o.images.get(photo, 'preview'))
+      } catch {
+        return null
+      }
     }
   }
 

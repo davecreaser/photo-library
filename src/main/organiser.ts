@@ -155,6 +155,10 @@ export class Organiser {
   }
 
   /** A suggestion's photos, in capture-time order; empty if it no longer exists. */
+  suggestionGroup(id: string): DetectedEvent | undefined {
+    return this.groups().find((g) => g.id === id)
+  }
+
   suggestionPhotoIds(id: string): number[] {
     return this.groups().find((g) => g.id === id)?.photoIds ?? []
   }

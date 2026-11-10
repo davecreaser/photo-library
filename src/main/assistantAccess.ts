@@ -53,10 +53,11 @@ export function setupSnippets(
   const env = { PHOTO_LIBRARY_SOCKET: address, PHOTO_LIBRARY_TOKEN: token }
   const desktopJson = JSON.stringify({ mcpServers: { 'photo-library': { command: 'node', args: [relayPath], env } } }, null, 2)
   const q = platform === 'win32' ? winQuote : posixQuote
+  // The name goes before --env: the CLI's --env takes several values and would swallow it.
   const claudeCommand = [
-    'claude mcp add --scope user',
+    'claude mcp add --scope user photo-library',
     ...Object.entries(env).map(([k, v]) => `--env ${q(`${k}=${v}`)}`),
-    'photo-library -- node',
+    '-- node',
     q(relayPath)
   ].join(' ')
   return { desktopJson, claudeCommand }

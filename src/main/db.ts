@@ -1339,8 +1339,8 @@ export class LibraryDb {
 
   renameAlbum(id: number, name: string): void {
     this.transaction(() => {
-      this.db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, id)
-      this.claimAlbum(id)
+      // Only a real change makes it the owner's (pressing Enter on the same name doesn't).
+      if (this.db.prepare('UPDATE albums SET name = ? WHERE id = ? AND name IS NOT ?').run(name, id, name).changes) this.claimAlbum(id)
     })
   }
 
@@ -1355,8 +1355,7 @@ export class LibraryDb {
       }
     }
     this.transaction(() => {
-      this.db.prepare('UPDATE albums SET parent_id = ? WHERE id = ?').run(parentId, id)
-      this.claimAlbum(id)
+      if (this.db.prepare('UPDATE albums SET parent_id = ? WHERE id = ? AND parent_id IS NOT ?').run(parentId, id, parentId).changes) this.claimAlbum(id)
     })
     return true
   }
@@ -1372,16 +1371,18 @@ export class LibraryDb {
   addToAlbum(albumId: number, photoIds: number[]): void {
     const stmt = this.db.prepare('INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)')
     this.transaction(() => {
-      photoIds.forEach((pid) => stmt.run(albumId, pid))
-      this.claimAlbum(albumId)
+      let changed = 0
+      photoIds.forEach((pid) => (changed += Number(stmt.run(albumId, pid).changes)))
+      if (changed) this.claimAlbum(albumId)
     })
   }
 
   removeFromAlbum(albumId: number, photoIds: number[]): void {
     const stmt = this.db.prepare('DELETE FROM album_photos WHERE album_id = ? AND photo_id = ?')
     this.transaction(() => {
-      photoIds.forEach((pid) => stmt.run(albumId, pid))
-      this.claimAlbum(albumId)
+      let changed = 0
+      photoIds.forEach((pid) => (changed += Number(stmt.run(albumId, pid).changes)))
+      if (changed) this.claimAlbum(albumId)
     })
   }
 

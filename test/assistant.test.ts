@@ -382,14 +382,14 @@ test('AC-2: the Claude Desktop JSON and the Claude Code command carry the relay,
   })
   assert.equal(
     mac.claudeCommand,
-    "claude mcp add --scope user --env 'PHOTO_LIBRARY_SOCKET=/Users/x/Library/Application Support/photo-library/assistant/assistant.sock' --env 'PHOTO_LIBRARY_TOKEN=ab12' photo-library -- node '/Users/o'\\''neil/photo-library/out/main/relay.js'"
+    "claude mcp add --scope user photo-library --env 'PHOTO_LIBRARY_SOCKET=/Users/x/Library/Application Support/photo-library/assistant/assistant.sock' --env 'PHOTO_LIBRARY_TOKEN=ab12' -- node '/Users/o'\\''neil/photo-library/out/main/relay.js'"
   )
   const win = setupSnippets('C:\\Users\\Me\\photo-library\\out\\main\\relay.js', '\\\\.\\pipe\\photo-library-0123456789abcdef', 'ab12', 'win32')
   assert.ok(win.desktopJson.includes('"C:\\\\Users\\\\Me\\\\photo-library\\\\out\\\\main\\\\relay.js"'), 'backslashes escaped in JSON')
   assert.equal(JSON.parse(win.desktopJson).mcpServers['photo-library'].env.PHOTO_LIBRARY_SOCKET, '\\\\.\\pipe\\photo-library-0123456789abcdef')
   assert.equal(
     win.claudeCommand,
-    'claude mcp add --scope user --env "PHOTO_LIBRARY_SOCKET=\\\\.\\pipe\\photo-library-0123456789abcdef" --env "PHOTO_LIBRARY_TOKEN=ab12" photo-library -- node "C:\\Users\\Me\\photo-library\\out\\main\\relay.js"'
+    'claude mcp add --scope user photo-library --env "PHOTO_LIBRARY_SOCKET=\\\\.\\pipe\\photo-library-0123456789abcdef" --env "PHOTO_LIBRARY_TOKEN=ab12" -- node "C:\\Users\\Me\\photo-library\\out\\main\\relay.js"'
   )
 })
 
@@ -508,6 +508,16 @@ test('AC-8: exactly five tools, each described for a model with an example; unkn
   assert.match((await c.tool('library_overview', { path: '/x' })).error, /Unknown input "path"/)
   assert.equal((await c.rpc('resources/list')).error!.message, 'Method not found: resources/list')
   assert.deepEqual((await c.rpc('ping')).result, {})
+  // Not a JSON-RPC object: answered, not dropped (and the app doesn't crash).
+  for (const line of ['null', '[]', '[{"jsonrpc":"2.0","id":9,"method":"ping"}]', '42']) {
+    c.socket.write(line + '\n')
+    assert.deepEqual(await c.next(), {
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32600, message: 'Invalid request: each line must be one JSON-RPC object (no batches)' }
+    })
+  }
+  assert.deepEqual((await c.rpc('ping')).result, {}, 'still connected')
   c.end()
   await lib.close()
 })
@@ -714,6 +724,15 @@ test('AC-13: the owner renaming, moving, or adding or removing photos makes an a
     assert.equal(lib.db.albumInfo(album_id)!.madeByAssistant, false)
     assert.match((await c.tool('add_to_album', { album_id, photo_ids: [ids[1]] })).error, /owner's/)
   }
+  // An owner action that changes nothing (same name, same place, photos already in or not in it) leaves it the assistant's.
+  {
+    const { album_id } = await c.tool('create_album', { name: 'Untouched', photo_ids: [ids[0]] })
+    lib.db.renameAlbum(album_id, 'Untouched')
+    lib.db.moveAlbum(album_id, null)
+    lib.db.addToAlbum(album_id, [ids[0]])
+    lib.db.removeFromAlbum(album_id, [ids[1]])
+    assert.equal(lib.db.albumInfo(album_id)!.madeByAssistant, true)
+  }
   // Deleting an assistant album undoes it; the photos stay.
   const { album_id } = await c.tool('create_album', { name: 'Gone', photo_ids: ids })
   lib.db.deleteAlbum(album_id)
@@ -838,13 +857,26 @@ test('AC-15: 100,000 photos, 500 albums, 200 people: overview under 1 s and 64 K
   let t = Date.now()
   const r = await c.rpc('tools/call', { name: 'library_overview', arguments: {} })
   assert.ok(Date.now() - t < 1000, `overview took ${Date.now() - t} ms`)
-  assert.ok(r.result.content[0].text.length < 64 * 1024, `overview is ${r.result.content[0].text.length} bytes`)
+  const bytes = (m: unknown) => Buffer.byteLength(JSON.stringify(m))
+  assert.ok(bytes(r) < 64 * 1024, `overview is ${bytes(r)} bytes on the wire`)
   for (const args of [{ limit: 200 }, { text: 'Person 7', limit: 200 }, { from: '2010-01-01', to: '2012-12-31', limit: 200 }]) {
     t = Date.now()
     const s = await c.rpc('tools/call', { name: 'search_photos', arguments: args })
     assert.ok(Date.now() - t < 2000, `${JSON.stringify(args)} took ${Date.now() - t} ms`)
-    assert.ok(s.result.content[0].text.length < 40 * 1024, `${JSON.stringify(args)} page is ${s.result.content[0].text.length} bytes`)
+    assert.ok(bytes(s) < 40 * 1024, `${JSON.stringify(args)} page is ${bytes(s)} bytes on the wire`)
   }
+  // Two assistants at once, each with its own paging.
+  const other = await client(lib)
+  const [mine, theirs] = await Promise.all([
+    c.tool('search_photos', { text: 'Person 3', limit: 7, offset: 7 }),
+    other.tool('search_photos', { from: '2006-01-01', to: '2006-01-31', limit: 5 })
+  ])
+  assert.equal(mine.offset, 7)
+  assert.equal(mine.photos.length, 7)
+  assert.ok(mine.photos.every((p: { people: string[] }) => p.people.includes('Person 3')))
+  assert.equal(theirs.photos.length, 5)
+  assert.ok(theirs.photos.every((p: { taken: string }) => p.taken.startsWith('2006-01')))
+  other.end()
   c.end()
   await lib.close()
 })

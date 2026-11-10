@@ -1463,6 +1463,23 @@ test('assistant access (spec 0008): off by default; the shown setup connects; al
     // The owner opens the album: the subtitle says who made it.
     await row.click()
     await expect(page.locator('.content-header .subtitle')).toContainText('Made by an AI assistant')
+
+    // Choosing a different photo folder turns access off (AC-1).
+    await link.click()
+    await toggle.check()
+    await expect(page.locator('.sidebar-footer').getByRole('button', { name: 'Assistant access (on)…' })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Done' }).click()
+    const other = mkdtempSync(join(tmpdir(), 'pl-e2e-other-'))
+    try {
+      await app.evaluate(({ dialog }, dir) => {
+        dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog
+      }, other)
+      await page.getByRole('button', { name: /Change folder/ }).click()
+      await expect(page.locator('.sidebar-footer').getByRole('button', { name: 'Assistant access…' })).toBeVisible()
+      expect((await page.evaluate(() => window.api.getAssistantAccess())).state).toBe('off')
+    } finally {
+      rmSync(other, { recursive: true, force: true })
+    }
   } finally {
     a.proc.kill()
   }

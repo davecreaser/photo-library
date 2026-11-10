@@ -108,12 +108,15 @@ class Connection {
       this.tools = this.o.tools()
       return this.send({ ok: true })
     }
+    if (typeof m !== 'object' || m === null || Array.isArray(m)) {
+      return this.send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request: each line must be one JSON-RPC object (no batches)' } })
+    }
     void this.request(m)
   }
 
   private async request(m: Message): Promise<void> {
     const isRequest = m.id !== undefined && m.id !== null
-    if (!m || typeof m.method !== 'string') {
+    if (typeof m.method !== 'string') {
       if (isRequest) this.send({ jsonrpc: '2.0', id: m.id, error: { code: -32600, message: 'Invalid request' } })
       return
     }
@@ -149,7 +152,8 @@ class Connection {
         if (typeof name !== 'string') return fail(-32602, 'tools/call needs a tool name')
         try {
           const result = await this.tools!.call(name, args)
-          return reply({ content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result })
+          // Sent once, as text: no outputSchema is declared, so structuredContent would only double the size.
+          return reply({ content: [{ type: 'text', text: JSON.stringify(result) }] })
         } catch (e) {
           if (!(e instanceof ToolError)) console.error('Assistant tool failed:', name, e)
           const text = e instanceof ToolError ? e.message : INTERNAL_ERROR

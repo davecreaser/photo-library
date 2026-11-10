@@ -71,8 +71,8 @@ export function AssistantDialog({ status, onClose }: { status: AssistantStatus |
         </label>
         <p className="hint">
           An AI assistant such as Claude can search this library and make albums of its own. It sees capture dates, album names, people&apos;s names and
-          favourites, and may send them to its company&apos;s servers. It never sees the photos themselves, file or folder names, places, or anything in an
-          ignored folder, and it can&apos;t change your files or your own albums.
+          favourites, and may send them to its company&apos;s servers. It never sees the photos themselves, file or folder names (except where one became an
+          album name), places, or anything in an ignored folder, and it can&apos;t change your files or your own albums.
         </p>
         {s.state === 'failed' && <p className="error">Couldn&apos;t start assistant access: {s.reason}.</p>}
         {s.state === 'on' && s.desktopJson && s.claudeCommand && (

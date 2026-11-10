@@ -45,7 +45,7 @@ Claude, or any MCP client, can search the library and make albums of its own (sp
        }
      }
      ```
-   - **Claude Code:** `claude mcp add --scope user --env 'PHOTO_LIBRARY_SOCKET=…' --env 'PHOTO_LIBRARY_TOKEN=…' photo-library -- node '<repo>/out/main/relay.js'`
+   - **Claude Code:** `claude mcp add --scope user photo-library --env 'PHOTO_LIBRARY_SOCKET=…' --env 'PHOTO_LIBRARY_TOKEN=…' -- node '<repo>/out/main/relay.js'`
 3. Keep Photo Library open while the assistant works. Needs Node.js 22.18 or later. Turning the switch off, or **Forget connected assistants**, cuts assistants off at once.
 
 ## Where data lives

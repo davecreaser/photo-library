@@ -295,7 +295,7 @@ function registerIpc(): void {
     }
     // A different photo folder is a different library: assistant access turns off (spec 0008, AC-1).
     const previous = db.getSetting('basePath')
-    if (previous && previous !== folder) await assistant.turnOff()
+    if (previous && relative(previous, folder) !== '') await assistant.turnOff()
     // Protect the new folder before it becomes the base.
     db.setSetting('protectedRoots', JSON.stringify([...new Set([...protectedRoots, folder])]))
     db.setSetting('basePath', folder)

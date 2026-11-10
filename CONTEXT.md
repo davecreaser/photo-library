@@ -130,3 +130,7 @@ The small command an assistant launches; it only forwards messages between the a
 
 **Assistant album**:
 An album the assistant made and the owner hasn't changed since; marked "AI" in the sidebar. Renaming, moving, or adding or removing photos makes it the owner's.
+
+**Proposal**:
+A pick of an album's photos the assistant asks the owner to review, shown in the Best of screen (spec 0009). Kept in memory only; only the owner's "Make album" keeps anything, as the owner's album.
+_Avoid_: suggestion (that is a suggested album), draft

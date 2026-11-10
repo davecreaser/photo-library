@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Album, BestOfSource, BestOfView as View, Photo } from '../../../shared/types.ts'
+import type { Album, BestOfReason, BestOfSource, BestOfView as View, Photo, ProposalShow } from '../../../shared/types.ts'
 import { formatDate } from '../format.ts'
 import {
   FOCUS_PLACEHOLDER,
@@ -7,6 +7,12 @@ import {
   LEAVE_PROMPT,
   MAKE_ALBUM_TOOLTIP,
   NOT_ENOUGH,
+  ASSISTANT_PICK,
+  PROPOSAL_FEWER_TOOLTIP,
+  PROPOSAL_FOCUS_HINT,
+  PROPOSAL_LOADING,
+  PROPOSAL_REPLACED,
+  incomingPrompt,
   madeNotice,
   pendingNotice,
   reasonText,
@@ -29,16 +35,41 @@ interface Props {
   suspended: boolean
   /** Bumped when photos may have changed under us (analysis, stars). */
   version: number
+  /** An AI assistant's pick to review (spec 0009): shown as fixed photos, count = their number. */
+  proposal?: ProposalShow
+  /** The proposal replaced another Best of screen ("Your AI assistant sent a new pick."). */
+  arrivedOver?: boolean
+  /** A newer proposal waiting behind the owner's edits: ask before leaving them. */
+  incoming?: ProposalShow | null
+  onIncomingLeave?: () => void
+  onIncomingStay?: () => void
+  /** Whether the pick differs from where it started, and whether an album was made from it. */
+  onStateChange?: (s: { edited: boolean; made: boolean }) => void
 }
 
 /** The Best of view (spec 0006): a pick of an album's photos, which the user can adjust and keep as an album. */
-export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum, onMade, suspended, version }: Props) {
+export function BestOfView({
+  source,
+  onPhotosLoaded,
+  onOpen,
+  onBack,
+  onOpenAlbum,
+  onMade,
+  suspended,
+  version,
+  proposal,
+  arrivedOver,
+  incoming,
+  onIncomingLeave,
+  onIncomingStay,
+  onStateChange
+}: Props) {
   const [view, setView] = useState<View | null>(null)
   const [slow, setSlow] = useState(false)
-  const [count, setCount] = useState<number | null>(null)
+  const [count, setCount] = useState<number | null>(proposal ? proposal.photoIds.length : null)
   const [focusText, setFocusText] = useState('')
   const [focus, setFocus] = useState('')
-  const [fixed, setFixed] = useState<number[]>([])
+  const [fixed, setFixed] = useState<number[]>(proposal?.photoIds ?? [])
   const [exclude, setExclude] = useState<number[]>([])
   const [made, setMade] = useState<Album | null>(null)
   const [error, setError] = useState(false)
@@ -57,14 +88,42 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
   const stripRequest = useRef(0)
   const sourceKey = JSON.stringify(source)
 
-  const edited = fixed.length > 0 || exclude.length > 0
-
-  // A new source starts from the automatic pick.
+  // A proposal is edited once the photos shown differ from the assistant's pick (spec 0009, Design).
+  const proposed = proposal?.photoIds ?? []
+  const proposedSet = new Set(proposed)
+  const edited = proposal
+    ? !!view && !view.tooFew && (view.photos.length !== proposed.length || view.photos.some((p) => !proposedSet.has(p.id)))
+    : fixed.length > 0 || exclude.length > 0
+  const [replacedNotice, setReplacedNotice] = useState(!!arrivedOver)
+  const firstPick = useRef(`${fixed.join()}|${exclude.join()}|${count}`)
   useEffect(() => {
-    setCount(null)
+    if (`${fixed.join()}|${exclude.join()}|${count}` !== firstPick.current) setReplacedNotice(false)
+  }, [fixed.join(), exclude.join(), count])
+  const reasonFor = (id: number, r: BestOfReason | undefined): string => (!r ? '' : proposedSet.has(id) && r.kind === 'yours' ? ASSISTANT_PICK : reasonText(r))
+
+  useEffect(() => onStateChange?.({ edited, made: made !== null }), [edited, made])
+  useEffect(() => {
+    if (proposal && !made) api.reportProposal(proposal.proposalId, { kind: 'edited', edited })
+  }, [edited])
+  // Leaving the screen closes the proposal (a decision already made stands). Checked a tick later,
+  // so React's development double mount doesn't close it.
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      setTimeout(() => {
+        if (proposal && !mounted.current) api.reportProposal(proposal.proposalId, { kind: 'closed' })
+      }, 0)
+    }
+  }, [])
+
+  // A new source starts from the automatic pick, or from the assistant's.
+  useEffect(() => {
+    setCount(proposal ? proposal.photoIds.length : null)
     setFocus('')
     setFocusText('')
-    setFixed([])
+    setFixed(proposal?.photoIds ?? [])
     setExclude([])
     setMade(null)
     setSwapping(null)
@@ -87,7 +146,7 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
         setView(v)
         setSlow(false)
         const reasons: Record<number, string> = {}
-        for (const [photoId, r] of Object.entries(v.reasons)) reasons[Number(photoId)] = reasonText(r)
+        for (const [photoId, r] of Object.entries(v.reasons)) reasons[Number(photoId)] = reasonFor(Number(photoId), r)
         onPhotosLoaded(v.photos, reasons)
       })
       .catch(() => id === request.current && setSlow(false))
@@ -116,8 +175,11 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (suspended || adding || e.target instanceof HTMLInputElement) return
-      if (e.key === 'Escape') leave()
-      else if ((e.key === 'Delete' || e.key === 'Backspace') && hovered.current !== null) remove(hovered.current)
+      if (e.key === 'Escape') {
+        if (incoming) onIncomingStay?.()
+        else if (leaving) setLeaving(false)
+        else leave()
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && hovered.current !== null) remove(hovered.current)
       else if (e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey)) undoRemove()
     }
     window.addEventListener('keydown', onKey)
@@ -127,7 +189,7 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
   if (!view)
     return (
       <div className="grid-scroller">
-        <div className="grid-meta">{slow ? 'Choosing the best photos…' : ''}</div>
+        <div className="grid-meta">{slow ? (proposal ? PROPOSAL_LOADING : 'Choosing the best photos…') : ''}</div>
       </div>
     )
 
@@ -172,26 +234,27 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
     await loadAdd(0)
   }
   const reset = () => {
-    setFixed([])
+    setFixed(proposal?.photoIds ?? [])
     setExclude([])
-    setCount(null)
+    setCount(proposal ? proposal.photoIds.length : null)
     setMade(null)
   }
   const makeAlbum = async () => {
     setError(false)
     try {
-      setMade(
-        await api.makeBestOfAlbum(
-          source,
-          view.photos.map((p) => p.id)
-        )
-      )
+      const ids = view.photos.map((p) => p.id)
+      const album = await api.makeBestOfAlbum(source, ids)
+      setMade(album)
+      if (proposal) api.reportProposal(proposal.proposalId, { kind: 'approved', albumId: album.id, name: album.name, photoIds: ids })
       onMade()
     } catch {
       setError(true)
     }
   }
-  const setN = (n: number) => setCount(Math.max(MIN_COUNT, Math.min(view.total, n)))
+  // A proposal's photos are fixed: the pick can't shrink below them (remove them with ✕ instead).
+  const fixedShown = proposal ? view.photos.filter((p) => fixed.includes(p.id)).length : 0
+  const minN = Math.max(MIN_COUNT, fixedShown)
+  const setN = (n: number) => setCount(Math.max(minN, Math.min(view.total, n)))
 
   let day = ''
   const tiles = view.photos.map((p, i) => {
@@ -206,7 +269,7 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
         {heading && <div className="grid-divider">{heading}</div>}
         <div
           className="tile"
-          title={reason ? reasonText(reason) : ''}
+          title={reasonFor(p.id, reason)}
           onClick={() => onOpen(i)}
           onMouseEnter={() => (hovered.current = p.id)}
           onMouseLeave={() => (hovered.current = null)}
@@ -260,13 +323,18 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
           <span className="subtitle">{subtitle(view.photos.length, view.total, view.momentCount)}</span>
           <label className="best-of-stepper">
             Show
-            <button aria-label="Fewer photos" disabled={view.count <= MIN_COUNT} onClick={() => setN(view.count - 1)}>
+            <button
+              aria-label="Fewer photos"
+              disabled={view.count <= minN}
+              title={proposal && view.count <= minN && minN > MIN_COUNT ? PROPOSAL_FEWER_TOOLTIP : undefined}
+              onClick={() => setN(view.count - 1)}
+            >
               −
             </button>
             <input
               aria-label="How many photos"
               type="number"
-              min={MIN_COUNT}
+              min={minN}
               max={view.total}
               value={view.count}
               onChange={(e) => setN(Number(e.target.value) || MIN_COUNT)}
@@ -280,7 +348,7 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
             Make album
           </button>
           {back}
-          {(edited || count !== null) && (
+          {(proposal ? edited || count !== proposed.length : edited || count !== null) && (
             <button className="link" onClick={reset}>
               Reset
             </button>
@@ -301,6 +369,9 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
             </button>
           )}
           {view.focusUnavailable && <span className="hint">{FOCUS_UNAVAILABLE}</span>}
+          {proposal && focusText && !view.focusUnavailable && view.photos.every((p) => fixed.includes(p.id)) && (
+            <span className="hint">{PROPOSAL_FOCUS_HINT}</span>
+          )}
         </div>
         {made && (
           <p className="notice-line">
@@ -312,7 +383,16 @@ export function BestOfView({ source, onPhotosLoaded, onOpen, onBack, onOpenAlbum
         )}
         {error && <p className="error">Couldn’t make the album.</p>}
         {stillReading && <p className="hint">{pendingNotice(view.pending.done, view.pending.total)}</p>}
-        {leaving && (
+        {replacedNotice && <p className="notice-line">{PROPOSAL_REPLACED}</p>}
+        {incoming && (
+          <p className="notice-line" role="alert">
+            {incomingPrompt(incoming.name)} <button onClick={onIncomingLeave}>Leave</button>{' '}
+            <button autoFocus onClick={onIncomingStay}>
+              Stay
+            </button>
+          </p>
+        )}
+        {leaving && !incoming && (
           <p className="notice-line">
             {LEAVE_PROMPT} <button onClick={onBack}>Leave</button> <button onClick={() => setLeaving(false)}>Stay</button>
           </p>

@@ -71,7 +71,83 @@ Traceability: US-1 → AC-2, AC-3, AC-4, AC-13. US-2 → AC-4. US-3 → AC-1 (th
 
 ## Design
 
-_To be filled in by the design step._
+The UI is the existing Best of screen (spec 0006 Design), opened by the assistant with its pick. Nothing new in the sidebar, no new dialog and no new component: one header `subtitle` (like the assistant album hint of spec 0008), one new reason line, and inline `notice-line`s in the Best of bar like the existing leave prompt. Assistant-facing copy (tool descriptions, errors, notes, statuses) is fixed by AC-1 to AC-9 and not repeated here.
+
+### Where it lives
+
+- **Entry point:** none for the owner to find; a `propose_selection` call opens it. The window shows the Best of screen of the proposal's album: title **"Best of Norway 2024"** as today, the album's name in "Back to Norway 2024".
+- **Window:** brought forward on every proposal (opened, restored, shown, focused; taskbar or dock attention where the system refuses focus). No sound, no system notification, no in-app toast.
+- **On the way in:** the photo viewer and any open dialog (settings, "Add a photo", Assistant access) close; a grid selection is dropped, as on any navigation. The only unsaved work the app has is an edited Best of, handled under "A proposal arrives over unsaved edits" below.
+
+### The proposal screen (waiting)
+
+- **Header subtitle** (`.subtitle` under the title, where an assistant album shows its hint): **"Picked by your AI assistant for you to look over. Change anything you like; nothing is kept until you press Make album."**
+- **Best of bar:** unchanged layout. Subtitle line `40 of 412 photos · 14 moments`; stepper "Show [ 40 ] photos" starting at the number proposed; **[Make album]** with its existing tooltip "Creates a new album with these photos. Nothing is moved or changed on disk."; **[Back to Norway 2024]**; **Reset** only once the pick differs from the proposal.
+- **Tiles:** exactly the proposed photos, in capture-time order with day headings, each with the hover ✕, the look-alike stack badge and the "Add a photo…" ghost tile, as today.
+- **Reason line** (tile tooltip and the viewer's info panel): **"Picked by your AI assistant"** for each proposed photo still in the pick. A photo the owner swaps in or adds says "You chose this one" as today; a photo the stepper's + adds gets the engine's own reason ("Sharpest of 6 similar photos" and so on).
+- **No "AI" pill** on tiles or the title: the subtitle and tooltips say it once without marking 40 tiles.
+
+### Adjusting it (AC-8)
+
+- **✕ / Delete, ⌘Z / Ctrl+Z, swap from the look-alike strip, "Add a photo…":** as spec 0006. Removing makes the pick one smaller (down to 6, after which the engine fills the gap with its own reason, as today).
+- **Stepper +:** adds the engine's next-best photos around the assistant's (the proposed ones are fixed and stay).
+- **Stepper −:** proposed photos are fixed, so − can't go below the number of fixed photos; there it is disabled with the tooltip **"To show fewer, remove photos with ✕"**. Above that it removes automatic additions, as today.
+- **"Focus on…":** works as today, but only guides photos the engine adds. While it has text and the pick is all fixed photos, a `hint` beside it reads **"Your assistant's picks stay; press + to add photos that match."**
+- **Reset:** returns to the proposal: the proposed photos, count equal to their number, nothing removed. "Focus on…" text is kept, as Reset keeps it today. It shows only while the photo set or count differs from the proposal; no confirm, as today.
+- **Edited** means the set of photos shown differs from the proposal (this is `edited: true` in `proposal_status`). A count change that is undone, or Reset, makes it unedited again.
+
+### Make album
+
+- Same button, tooltip and result as spec 0006: "Best of Norway 2024" (numbered if taken), nested under the source album, an ordinary album of the owner's with no "AI" pill and no assistant hint.
+- Notice as today: **"Made the album “Best of Norway 2024” with 39 photos. [Open album]"**
+- The header subtitle changes to **"Made from your AI assistant's pick. The album is yours; the assistant can't change it."** The tooltips keep "Picked by your AI assistant".
+- Error: **"Couldn’t make the album."** as today; the proposal stays waiting.
+- Later edits and a second Make album behave as today; the assistant only hears about the first.
+
+### Leaving
+
+- **[Back to Norway 2024], Esc, or the sidebar:** an unedited proposal leaves at once; an edited one, with no album made, asks first in the bar, as today: **"Leave without making an album?" [Leave] [Stay]**. Leave closes the proposal; Stay keeps it waiting. After Make album, leaving never asks.
+- **The source album deleted** (by the owner) while it shows: the screen leaves as for deleting any open album; the proposal is closed.
+
+### A newer proposal
+
+- **Over an unedited or already-made proposal, or an unedited ordinary Best of:** the screen switches to the new pick at once (same or different album) with the notice line **"Your AI assistant sent a new pick."** It clears on the next action, like other notices.
+- **Over an edited Best of with no album made** (proposal or ordinary): the window comes forward but the screen doesn't change; the bar shows **"Your AI assistant sent a new pick of “Iceland”. Leave without making an album?" [Leave] [Stay]**, focus on Stay. Leave opens the new proposal (the old one is replaced). Stay, or Esc, closes the new proposal and keeps the owner's screen as it was (an old proposal there stays waiting).
+- **While that prompt is up, a third proposal arrives:** the prompt's album name updates to the newest; the one it replaced is replaced.
+
+### Access turned off, or assistants forgotten, while it shows (AC-11)
+
+- The screen stays as it is, with the owner's edits; nothing is reset. It is now an ordinary Best of: Make album, Back, Reset (still to the proposal) all work.
+- The header subtitle becomes **"Assistant access is off, so your assistant won't hear what you decide. You can still make the album."** Tooltips keep "Picked by your AI assistant" (it's still true).
+- A newer proposal can't arrive; an incoming-pick prompt that was up disappears and the screen is unchanged.
+
+### States
+
+- **Loading:** if the pick takes over 300 ms, the grid line reads **"Opening your AI assistant's pick…"** (instead of "Choosing the best photos…"). On a 5,000-photo album it shows within 2 seconds (AC-13).
+- **Populated (waiting):** as above.
+- **Edited:** Reset appears; leaving asks.
+- **Made:** made notice and made subtitle.
+- **Pending analysis:** the existing "Still reading your photos: 112 of 400 done. The choice will improve as it goes." line; it affects only what + adds.
+- **Error / too few:** `propose_selection` refuses fewer than 6, so the screen never opens empty. If photos went missing between the call and the screen (a rescan) and fewer than 6 remain, the existing empty state shows: **"Not enough photos to choose from."** [Back to Norway 2024]; the proposal is closed when the owner leaves.
+- **Very large library:** the pick is at most 200 photos; the grid and Add a photo picker page as today.
+- **Empty library / no access:** no proposal can arrive; nothing changes.
+
+### Keyboard
+
+As spec 0006: Esc leaves (or asks), Delete removes the photo under the pointer, ⌘Z / Ctrl+Z puts it back, arrows step the viewer through the pick. In the incoming-pick prompt, Esc is Stay, Enter on the focused button chooses it.
+
+### Traceability
+
+| AC           | Satisfied by                                                                                                                                                                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AC-1 to AC-6 | No UI (assistant-facing copy in the ACs)                                                                                                                                                                                                                      |
+| AC-7         | Where it lives (window forward, viewer and dialogs close); proposal screen: proposed photos only, count = their number, "Picked by your AI assistant" tooltip, waiting subtitle; loading line; incoming-pick prompt over edits (Stay closes the new proposal) |
+| AC-8         | Adjusting it (✕, swap, add, stepper, Focus on…); Reset to the proposal; Make album: owner's album, no "AI" pill, made subtitle "the assistant can't change it"                                                                                                |
+| AC-9         | waiting = proposal screen; `edited` = Edited definition; approved = Make album (first one counts); closed = Leave, Stay, source deleted, too-few leave; replaced = A newer proposal; expired = access off (and quit, folder change)                           |
+| AC-10        | ✕ and swap on the proposal, Make album; "Back to …" on an unedited proposal leaves at once (closed, no album)                                                                                                                                                 |
+| AC-11        | Access turned off: screen kept as an ordinary Best of, access-off subtitle, no more prompts                                                                                                                                                                   |
+| AC-12        | Make album tooltip ("Nothing is moved or changed on disk"); no stored proposal, nothing on screen survives a restart                                                                                                                                          |
+| AC-13        | Loading state within 2 s; very large library state                                                                                                                                                                                                            |
 
 ## Open questions
 
@@ -96,3 +172,4 @@ _To be filled in by the design step._
   - Same privacy rules as spec 0008 and ADR 0011: no paths, folder or file names, pixels, places, cameras or hashes; reasons must not leak folder names (the engine's reasons are fixed sentences with only named people's names and focus words).
   - Spec 0008's AC-8 "exactly five tools" is superseded by AC-1 here.
 - 2026-11-10, the owner's answers to the open questions (all as recommended): 1. suggested albums are left out (the assistant searches, makes an album, then runs `best_of`); 2. a separate `proposal_status` tool, so eight tools; 3. the proposal loads as `fixed` with count = picks, nothing excluded, and Reset returns to the assistant's pick; 4. the assistant may propose any present photo of the album; 5. the approved album is the owner's (no AI marker); 6. unsaved Best of edits get the existing "Leave without making an album?" prompt, and Stay closes the proposal; 7. the window comes forward on every proposal; 8. counts 6–200 for both tools; 9. no quality scores to the assistant, reasons only; 10. up to 5 alternatives per pick; 11. no paid gating now.
+- 2026-11-10, the owner's answers on the design (all as recommended): leaving an unedited proposal doesn't ask first; tooltips keep "Picked by your AI assistant" after access is turned off; no AI pill per tile; − can't shrink below the assistant's picks (remove with ✕); the window comes forward even while the owner is typing in the app.

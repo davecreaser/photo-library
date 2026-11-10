@@ -1,24 +1,36 @@
 name: CI
 
 on:
-  # Every pushed commit on every branch, once. PRs show these checks (they attach to the commit),
-  # so there's no separate pull_request trigger running the same tests twice.
-  push:
-  workflow_dispatch: # run by hand (e.g. macOS on a PR): Actions → CI → Run workflow
+  # Lean on Actions minutes: only ready (non-draft) pull requests, and only when code changed.
+  # Linux runs everything. Windows and macOS (2x and 10x the cost) run by hand when a change is
+  # platform-sensitive: Actions -> CI -> Run workflow, pick the branch and the OS.
+  # Nothing runs on main after a merge: what lands there was tested on its PR.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.claude/**'
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Which system to test on
+        type: choice
+        default: windows-latest
+        options: [windows-latest, macos-latest, ubuntu-latest, all]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ inputs.os || 'pr' }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: ${{ matrix.os }}
+    if: github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
       matrix:
-        # macOS minutes cost 10x on private repos, and the owner develops on a Mac (pre-commit
-        # hooks and QA run there), so only main and manual runs use macOS; everything else runs Linux + Windows.
-        os: ${{ fromJSON((github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && '["macos-latest", "windows-latest", "ubuntu-latest"]' || '["windows-latest", "ubuntu-latest"]') }}
+        os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["ubuntu-latest"]' || inputs.os == 'all' && '["ubuntu-latest", "windows-latest", "macos-latest"]' || format('["{0}"]', inputs.os)) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

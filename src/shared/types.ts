@@ -42,6 +42,8 @@ export interface Album {
   photoCount: number
   /** True when made from suggested albums (deleting it brings them back). */
   fromSuggestion?: boolean
+  /** Made through assistant access and not changed by the owner since (spec 0008). */
+  madeByAssistant?: boolean
 }
 
 export interface Tag {
@@ -151,6 +153,11 @@ export interface PhotoFilter {
   favorites?: boolean
   personId?: number
   undated?: boolean
+  /** Capture dates 'YYYY-MM-DD', inclusive (spec 0008); undated photos never match. */
+  from?: string
+  to?: string
+  /** Photos showing every one of these people (spec 0008). */
+  personIds?: number[]
   /** Free text, e.g. "august 2020 spain". Parsed by parseSearch(). */
   text?: string
   offset?: number
@@ -251,6 +258,16 @@ export interface ExportProgress {
   total: number
 }
 
+/** Assistant access (spec 0008), as settings shows it. */
+export interface AssistantStatus {
+  state: 'off' | 'starting' | 'on' | 'failed'
+  /** Why it couldn't start (state 'failed'). */
+  reason?: string
+  /** While on: the setup to copy (they contain the token). */
+  desktopJson?: string
+  claudeCommand?: string
+}
+
 export interface Api {
   /** Best of an album or suggested album (spec 0006). Computed, never stored. */
   getBestOf(request: BestOfRequest): Promise<BestOfView>
@@ -272,6 +289,16 @@ export interface Api {
   revealExport(): Promise<void>
   onExportProgress(cb: (p: ExportProgress) => void): () => void
 
+  /** Assistant access (spec 0008). */
+  getAssistantAccess(): Promise<AssistantStatus>
+  setAssistantAccess(on: boolean): Promise<AssistantStatus>
+  /** Replaces the token: every connected assistant needs setting up again. */
+  forgetAssistants(): Promise<AssistantStatus>
+  onAssistantStatus(cb: (s: AssistantStatus) => void): () => void
+  /** An assistant made or changed an album. */
+  onAlbumsChanged(cb: () => void): () => void
+  /** Puts text on the clipboard; false if that failed. */
+  copyText(text: string): Promise<boolean>
   /** Which collapsible sidebar sections are open (spec 0004). Only a setting is written. */
   getSidebarSections(): Promise<SidebarSections>
   setSidebarSections(s: SidebarSections): Promise<void>

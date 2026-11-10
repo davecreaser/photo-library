@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Album,
   AlbumOffer,
+  AssistantStatus,
   BestOfSource,
   ClockSuggestion,
   ContentProgress,
@@ -21,6 +22,7 @@ import { PhotoGrid } from './components/PhotoGrid.tsx'
 import { BestOfView } from './components/BestOfView.tsx'
 import { LookalikeGroup } from './components/LookalikeGroup.tsx'
 import { LeanDialog } from './components/LeanDialog.tsx'
+import { AssistantDialog, ASSISTANT_ALBUM_HINT } from './components/AssistantDialog.tsx'
 import { NOT_ENOUGH } from './bestOfCopy.ts'
 import { Viewer } from './components/Viewer.tsx'
 import { ExportDialog } from './components/ExportDialog.tsx'
@@ -104,6 +106,8 @@ export function App() {
   const [lookalikeGroups, setLookalikeGroups] = useState<number[][]>([])
   const [openGroup, setOpenGroup] = useState<number[] | null>(null)
   const [showLean, setShowLean] = useState(false)
+  const [showAssistant, setShowAssistant] = useState(false)
+  const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | null>(null)
   // Bumped whenever the photo list for the current view may have changed.
   const [version, setVersion] = useState(0)
 
@@ -159,12 +163,26 @@ export function App() {
         void refreshSidebar()
       }
     })
+    void api.getAssistantAccess().then(setAssistantStatus)
+    const offAssistant = api.onAssistantStatus(setAssistantStatus)
     return () => {
       offScan()
       offFaces()
       offContent()
+      offAssistant()
     }
   }, [refreshSidebar, refreshAll])
+
+  // An assistant made or changed an album (spec 0008, AC-13): the sidebar shows it, and an open album refreshes in place.
+  const viewIsAlbum = view.kind === 'album'
+  useEffect(
+    () =>
+      api.onAlbumsChanged(() => {
+        void refreshSidebar()
+        if (viewIsAlbum) setVersion((v) => v + 1)
+      }),
+    [refreshSidebar, viewIsAlbum]
+  )
 
   // Debounce typing into a search view; clearing the box returns to all photos.
   useEffect(() => {
@@ -426,6 +444,8 @@ export function App() {
         onShowCorrections={() => setShowCorrections(true)}
         onShowIgnored={() => setShowIgnored(true)}
         onShowBestOf={() => setShowLean(true)}
+        assistantStatus={assistantStatus}
+        onShowAssistant={() => setShowAssistant(true)}
       />
 
       <main className="content">
@@ -449,6 +469,7 @@ export function App() {
             <h1>{title}</h1>
             {currentSuggestion && <div className="subtitle">{suggestionMeta(currentSuggestion)}</div>}
             {currentOffer && <div className="subtitle">{offerMeta(currentOffer)}</div>}
+            {view.kind === 'album' && albums.find((a) => a.id === view.id)?.madeByAssistant && <div className="subtitle">{ASSISTANT_ALBUM_HINT}</div>}
           </div>
           {currentPerson &&
             view.kind === 'person' &&
@@ -698,6 +719,7 @@ export function App() {
       )}
 
       {showLean && <LeanDialog onClose={() => setShowLean(false)} />}
+      {showAssistant && <AssistantDialog status={assistantStatus} onClose={() => setShowAssistant(false)} />}
       {showCorrections && <CorrectionsDialog onClose={() => setShowCorrections(false)} onChanged={refreshAll} />}
       {showIgnored && <IgnoredFoldersDialog onClose={() => setShowIgnored(false)} onChanged={refreshAll} />}
       {showDismissed && (

@@ -118,3 +118,15 @@ A run of photos close in time and scene (a lunch, a viewpoint). Computed, never 
 
 **Quality score**:
 A number from 0 to 1 per photo from sharpness, exposure and face size, measured once in the background analysis pass (`photo_quality`, `QUALITY_VERSION`).
+
+### Assistant access
+
+**Assistant access**:
+The per-library switch that lets an AI assistant search the library and make albums through the app's MCP server (spec 0008, ADR 0011). Off by default.
+_Avoid_: API, integration, plugin
+
+**Relay**:
+The small command an assistant launches; it only forwards messages between the assistant and the app's local socket.
+
+**Assistant album**:
+An album the assistant made and the owner hasn't changed since; marked "AI" in the sidebar. Renaming, moving, or adding or removing photos makes it the owner's.

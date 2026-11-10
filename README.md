@@ -27,6 +27,27 @@ npm test           # unit + integration tests
 npm run typecheck
 ```
 
+## AI assistants (assistant access)
+
+Claude, or any MCP client, can search the library and make albums of its own (spec 0008, ADR 0011). It never sees the photos, file or folder names, or places; it sees dates, album and people's names and favourites, which a cloud assistant may send to its company's servers. Off by default.
+
+1. Build once (`npm run build`), start the app, and in the sidebar open **Assistant access…** and tick **Let AI assistants use this library**.
+2. Copy the setup the dialog shows (it contains this library's secret key):
+   - **Claude Desktop:** Settings › Developer › Edit Config, add the `photo-library` entry, restart Claude Desktop. It looks like:
+     ```json
+     {
+       "mcpServers": {
+         "photo-library": {
+           "command": "node",
+           "args": ["<repo>/out/main/relay.js"],
+           "env": { "PHOTO_LIBRARY_SOCKET": "<app data>/assistant/assistant.sock", "PHOTO_LIBRARY_TOKEN": "<secret key>" }
+         }
+       }
+     }
+     ```
+   - **Claude Code:** `claude mcp add --scope user photo-library --env 'PHOTO_LIBRARY_SOCKET=…' --env 'PHOTO_LIBRARY_TOKEN=…' -- node '<repo>/out/main/relay.js'`
+3. Keep Photo Library open while the assistant works. Needs Node.js 22.18 or later. Turning the switch off, or **Forget connected assistants**, cuts assistants off at once.
+
 ## Where data lives
 
 `~/Library/Application Support/photo-library/`:
@@ -43,7 +64,7 @@ Specs live in `docs/specs/`; features go through `/feature`.
 3. ~~Suggested albums~~ (spec 0001, done)
 4. **Search by content** (spec 0002, in review): a local CLIP-style model (SigLIP) and a vector index (sqlite-vec), so "beach", "snow" or "birthday cake" work without tags.
 5. **Best photos** (spec 0003): near-duplicate detection (from the content embeddings), quality scores (sharpness, exposure, eyes open) and "pick a diverse set of N" (covering days and people). Useful on its own as a "Best of" view for any album or suggestion.
-6. **Local app API**: a localhost-only API (search, people, events, albums, best photos, export copies, render slideshow) that tools and agents can call. The app itself stays local-only.
+6. **Assistant access** (spec 0008, epic #55): an MCP server inside the app on a local socket (no port), so Claude can search and make albums; then Best of and proposals, slideshow and copies, and recipes as prompts. Replaces the localhost API + n8n plan.
 7. **Recipes with n8n**: n8n chains the app's building blocks for a job, with a human approval step and optional delivery to outside services (which the app never does itself).
    - First recipe: **trip slideshow** ("make me a slideshow of our holiday to Poland"): pick the best ~40, approve or swap them in a form, render a video to `~/Movies`.
    - Then: **photobook selection** ("best of 2026 as a present"): an album of the best ~60 plus a folder of copies ready for the print shop.

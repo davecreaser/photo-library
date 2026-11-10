@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, ContentProgress, ExportProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
+import type { Api, AssistantStatus, ContentProgress, ExportProgress, FaceProgress, ScanProgress } from '../shared/types.ts'
 
 const api: Api = {
   getBestOf: (r) => ipcRenderer.invoke('bestOf:get', r),
@@ -22,6 +22,20 @@ const api: Api = {
     ipcRenderer.on('export:progress', listener)
     return () => ipcRenderer.removeListener('export:progress', listener)
   },
+  getAssistantAccess: () => ipcRenderer.invoke('assistant:get'),
+  setAssistantAccess: (on) => ipcRenderer.invoke('assistant:set', on),
+  forgetAssistants: () => ipcRenderer.invoke('assistant:forget'),
+  onAssistantStatus: (cb) => {
+    const listener = (_e: unknown, s: AssistantStatus) => cb(s)
+    ipcRenderer.on('assistant:status', listener)
+    return () => ipcRenderer.removeListener('assistant:status', listener)
+  },
+  onAlbumsChanged: (cb) => {
+    const listener = () => cb()
+    ipcRenderer.on('albums:changed', listener)
+    return () => ipcRenderer.removeListener('albums:changed', listener)
+  },
+  copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   getSidebarSections: () => ipcRenderer.invoke('sidebar:get'),
   setSidebarSections: (s) => ipcRenderer.invoke('sidebar:set', s),
   getLibrary: () => ipcRenderer.invoke('library:get'),

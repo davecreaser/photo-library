@@ -295,12 +295,20 @@ export function App() {
       setNotice({ kind: 'dismissed', label, decisionIds })
     })
   const offerBusy = useRef(new Set<number>())
-  /** A second click while the first is still working does nothing (it would replace the Undo notice with an error). */
+  /**
+   * A second click on the same offer does nothing until the list has refreshed (it would replace the
+   * Undo notice with an error): the guard stays after success, because the row is still on screen
+   * until the new list arrives, and is cleared when it does.
+   */
   const once = (albumId: number, run: () => Promise<void>): Promise<void> => {
     if (offerBusy.current.has(albumId)) return Promise.resolve()
     offerBusy.current.add(albumId)
-    return run().finally(() => offerBusy.current.delete(albumId))
+    return run().catch((e) => {
+      offerBusy.current.delete(albumId)
+      throw e
+    })
   }
+  useEffect(() => offerBusy.current.clear(), [offers])
   const addOffer = (albumId: number) =>
     once(albumId, () =>
       decide(async () => {

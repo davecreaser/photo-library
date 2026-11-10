@@ -24,8 +24,10 @@ let everConnected = false
 let initializeLine: string | null = null
 /** Lines from the assistant waiting for a connection. */
 let queue: string[] = []
-/** Requests sent to the app and not yet answered. */
-const inFlight = new Set<Id>()
+/** Requests sent to the app and not yet answered, with their lines (to resend once after a dropped connection). */
+const inFlight = new Map<Id, string>()
+/** Requests already resent once: if the connection drops again, they fail. */
+const resent = new Set<Id>()
 let stdinBuffer = ''
 let socketBuffer = ''
 
@@ -49,13 +51,14 @@ function failAll(message: string): void {
     if (id !== null) answerError(id, message)
   }
   queue = []
-  for (const id of inFlight) if (id !== REPLAY_ID) answerError(id, message)
+  for (const id of inFlight.keys()) if (id !== REPLAY_ID) answerError(id, message)
   inFlight.clear()
+  resent.clear()
 }
 
 function send(line: string): void {
   const id = idOf(line)
-  if (id !== null) inFlight.add(id)
+  if (id !== null) inFlight.set(id, line)
   socket!.write(line + '\n')
 }
 
@@ -105,6 +108,7 @@ function fromApp(line: string): void {
   })()
   if (id !== null) {
     inFlight.delete(id)
+    resent.delete(id)
     if (id === REPLAY_ID) return
   }
   process.stdout.write(line + '\n')
@@ -141,8 +145,23 @@ function startConnect(): void {
   s.on('close', () => {
     clearTimeout(timer)
     if (socket !== s) return
-    failAll(UNREACHABLE)
+    const wasReady = ready
     disconnect()
+    // The app answers every request before it closes a connection on purpose (turned off, setup
+    // forgotten), so one left unanswered was never run: send it again once on a new connection,
+    // which also tells the assistant why (e.g. its setup is out of date). The app may have closed
+    // the connection just as the assistant sent it.
+    const retry = wasReady ? [...inFlight].filter(([id]) => id !== REPLAY_ID && !resent.has(id)) : []
+    if (retry.length) {
+      for (const [id] of inFlight) if (id !== REPLAY_ID && resent.has(id)) answerError(id, UNREACHABLE)
+      inFlight.clear()
+      for (const [id, line] of retry) {
+        resent.add(id)
+        queue.push(line)
+      }
+      return startConnect()
+    }
+    failAll(UNREACHABLE)
   })
 }
 

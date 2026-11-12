@@ -1,6 +1,6 @@
 # 0011: Search match strength
 
-Status: approved
+Status: done
 Issue: #61; epic #55 (assistant access)
 
 ## Problem

@@ -1,6 +1,6 @@
 # 0011: Search match strength
 
-Status: draft
+Status: approved
 Issue: #61; epic #55 (assistant access)
 
 ## Problem
@@ -61,4 +61,10 @@ Result example: `{"total": 24, "strong_total": 10, "offset": 0, "photos": [{"id"
 
 ## Decisions
 
-(To be filled in when the spec is approved.)
+Owner: `go` (recommended answers).
+
+1. **The line is a fraction of the best match's score**, `STRONG_FRACTION = 0.65`. Calibrated on COCO val2017 (5,000 images, 80 object names) with `scripts/model-eval/calibrate-strength.mjs`: strong matches 91% right and 63% of all right matches kept strong; weak matches 39% right. A fixed fraction beat the biggest gap (88% / 20%). Fractions 0.55 to 0.75 are tabulated in the code comment beside the constant.
+2. **Two tiers**: `strong`, `weak`.
+3. **`total` unchanged**; `strong_total` added.
+
+AC-7 note: the agent eval (`node scripts/agent-eval/run.ts --task content --runs 5`) needs an Anthropic API key, which the headless build run doesn't have; run it before merging and record the numbers in the PR.

@@ -28,6 +28,27 @@ export const CONTENT_MODEL_VERSION = 1
  */
 export const CONTENT_MIN_SCORE = 0.0425
 
+/**
+ * Of a search's content matches, the strong ones (spec 0011) score at least this fraction of the
+ * best match's score; the rest are weak. A fraction rather than a number, so it adapts to the
+ * phrase: some words score high for everything they match, others low. Fixed for the model,
+ * never per library. Chosen on COCO val2017 (5,000 images, the 80 object names as queries,
+ * COCO's labels as the truth; scripts/model-eval/calibrate-strength.mjs reproduces it). At 0.65
+ * the strong matches are 91% right and hold 63% of all right matches, the weak ones 39% right
+ * (all matches together: 61%); at 0.55 it is 83% / 80% / 30%, at 0.75 95% / 44% / 48%; the
+ * biggest gap in the scores does worse (88% / 20%). Revisit with CONTENT_MIN_SCORE.
+ */
+export const STRONG_FRACTION = 0.65
+
+/** How many of these content-match scores, best first, are strong: always the best one, so at least 1 unless there are none. */
+export function strongMatchCount(scores: number[]): number {
+  if (scores.length === 0) return 0
+  const line = scores[0] * STRONG_FRACTION
+  let n = 1
+  while (n < scores.length && scores[n] >= line) n++
+  return n
+}
+
 export const CONTENT_DIM = 768
 const MODEL_DIR = 'siglip-base-patch16-224'
 

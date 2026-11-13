@@ -648,7 +648,7 @@ export class LibraryDb {
    * search, analysed by the current model and similar enough to the phrase, best first. Name
    * matches (queryPhotos) are left out, so each photo is listed once.
    */
-  contentMatches(filter: PhotoFilter, eventPhotoIds: number[] | undefined, plan: SearchPlan, content: ContentQuery): number[] {
+  contentMatches(filter: PhotoFilter, eventPhotoIds: number[] | undefined, plan: SearchPlan, content: ContentQuery): { id: number; score: number }[] {
     const c = this.photoConditions(filter, eventPhotoIds)
     const where = [...c.base, 'p.content_version = ?']
     const params: SqlValue[] = [...c.baseParams, content.version]
@@ -660,7 +660,7 @@ export class LibraryDb {
       where.push(`NOT (${c.terms.join(' AND ')})`)
       params.push(...c.termParams)
     }
-    return this.vectors.search(content.vector, content.minScore, where.join(' AND '), params).map((m) => m.id)
+    return this.vectors.search(content.vector, content.minScore, where.join(' AND '), params)
   }
 
   /** Ids of the photos in an album and in the albums inside it (including missing ones). */

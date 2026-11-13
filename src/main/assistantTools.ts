@@ -56,7 +56,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 - people: names from library_overview; each photo shows all of them.
 - album_id: only photos in this album.
 - offset / limit: paging; limit defaults to ${DEFAULT_PAGE}, at most ${MAX_PAGE}.
-Returns total (all matches) first, then the page: per photo its id, capture time (YYYY-MM-DD HH:MM, or null), people, albums, whether it is a favourite (starred by the owner), and why it matched: "name", "content" with its rank (1 = best), or "filter". You never see the photos themselves. Example: search_photos({"text": "beach", "people": ["Jake"], "from": "2024-06-01", "to": "2024-08-31"}).`,
+Returns total (all matches) first, then the page: per photo its id, capture time (YYYY-MM-DD HH:MM, or null), people, albums, whether it is a favourite (starred by the owner), and why it matched: "name", "content" with its rank (1 = best) and its strength, or "filter". A content match is "strong" or "weak"; weak ones are looser, so leave them out of albums and answers unless the owner asked for everything or for anything like it. strong_total is how many strong matches there are in all (the strong ones come first). You never see the photos themselves. Example: search_photos({"text": "beach", "people": ["Jake"], "from": "2024-06-01", "to": "2024-08-31"}).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -312,7 +312,7 @@ export class AssistantTools {
       filter.albumId = id
     }
 
-    const page = await this.ctx.search.query(filter)
+    const { page, strong } = await this.ctx.search.queryWithStrength(filter)
     const facts = db.peopleAndAlbums(page.photos.map((p) => p.id))
     const nameMatches = page.search ? page.search.nameMatches : text ? page.total : 0
     const photos = page.photos.map((p, i) => {
@@ -324,11 +324,17 @@ export class AssistantTools {
         people: f.people,
         albums: f.albums,
         favorite: p.favorite,
-        match: !text ? 'filter' : at < nameMatches ? 'name' : { content: at - nameMatches + 1 }
+        match: !text ? 'filter' : at < nameMatches ? 'name' : { content: at - nameMatches + 1, strength: at - nameMatches < strong ? 'strong' : 'weak' }
       }
     })
     const analysis = page.search?.phrase ? this.analysisNote() : {}
-    return { total: page.total, offset, ...('note' in analysis && analysis.note ? { note: analysis.note } : {}), photos }
+    return {
+      total: page.total,
+      ...(strong > 0 ? { strong_total: strong } : {}),
+      offset,
+      ...('note' in analysis && analysis.note ? { note: analysis.note } : {}),
+      photos
+    }
   }
 
   private albumName(v: unknown): string {

@@ -63,8 +63,8 @@ Result example: `{"total": 24, "strong_total": 10, "offset": 0, "photos": [{"id"
 
 Owner: `go` (recommended answers).
 
-1. **The line is a fraction of the best match's score**, `STRONG_FRACTION = 0.65`. Calibrated on COCO val2017 (5,000 images, 80 object names) with `scripts/model-eval/calibrate-strength.mjs`: strong matches 91% right and 63% of all right matches kept strong; weak matches 39% right. A fixed fraction beat the biggest gap (88% / 20%). Fractions 0.55 to 0.75 are tabulated in the code comment beside the constant.
+1. **The line is a fraction of the best match's margin above `CONTENT_MIN_SCORE`**, `STRONG_FRACTION = 0.65`: strong if `score − min ≥ 0.65 × (best − min)`. Calibrated on COCO val2017 (5,000 images, 80 object names) with `scripts/model-eval/calibrate-strength.mjs`: strong matches 97% right and 34% of all right matches kept strong; weak matches 51% right. Revised after review: the first line, 0.65 of the raw score (91% / 63%), failed the content eval 0 of 5, because two non-red photos scored 0.78 of the best (0.61 of its margin); measured from 0 rather than from the minimum, every match looks close to the best, and a phrase whose best match is only just in comes back all strong. At equal precision the margin beats a raw fraction (0.80: 97% / 32%) and the biggest gap (89% / 21%). Owner's choice between margin 0.50 (94% / 53%, eval still fails) and 0.65: **0.65, precision over recall**; albums hold what was asked for, and weak matches stay available when the owner asks for everything.
 2. **Two tiers**: `strong`, `weak`.
 3. **`total` unchanged**; `strong_total` added.
 
-AC-7 note: the agent eval (`node scripts/agent-eval/run.ts --task content --runs 5`) needs an Anthropic API key, which the headless build run doesn't have; run it before merging and record the numbers in the PR.
+AC-7, measured locally (claude-sonnet-5-5, owner's login, 2026-11-12): `content` 5/5 (baseline 0/3; 0/5 with the first line), `trip` 3/3, `people-date-place` 3/3. The eval runs with `ANTHROPIC_API_KEY` or a Claude login, so it can run outside the headless build.

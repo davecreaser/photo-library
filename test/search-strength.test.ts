@@ -5,16 +5,18 @@ import assert from 'node:assert/strict'
 import { setup } from './assistant-helpers.ts'
 import { AssistantTools, TOOL_DEFINITIONS } from '../src/main/assistantTools.ts'
 import { PhotoSearch } from '../src/main/photoSearch.ts'
-import { STRONG_FRACTION, strongMatchCount } from '../src/main/contentModel.ts'
+import { CONTENT_MIN_SCORE, STRONG_FRACTION, strongMatchCount } from '../src/main/contentModel.ts'
 import type { PhotoFilter, PhotoPage } from '../src/shared/types.ts'
 
-test('AC-2: the line is a fixed fraction of the best score; the best is always strong', () => {
+test('AC-2: the line is a fixed fraction of the best margin above CONTENT_MIN_SCORE; the best is always strong', () => {
+  assert.equal(STRONG_FRACTION > 0 && STRONG_FRACTION < 1, true)
   assert.equal(strongMatchCount([]), 0)
   assert.equal(strongMatchCount([0.05]), 1)
-  assert.equal(strongMatchCount([0.1, 0.1, 0.066, 0.064, 0.05]), 3)
-  assert.equal(strongMatchCount([0.1, 0.0651, 0.065, 0.0649]), 3, 'the line itself is strong')
-  assert.equal(strongMatchCount([0.0426, 0.043]), 2, 'a low best still has the same relative line')
-  assert.equal(STRONG_FRACTION > 0 && STRONG_FRACTION < 1, true)
+  const line = CONTENT_MIN_SCORE + (0.1 - CONTENT_MIN_SCORE) * STRONG_FRACTION
+  assert.equal(strongMatchCount([0.1, 0.1, line + 1e-6, line, line - 1e-6, 0.044]), 4, 'the line itself is strong')
+  // A weak best: the line is still part-way between the minimum and the best, so not everything is strong.
+  const low = CONTENT_MIN_SCORE + 0.01
+  assert.equal(strongMatchCount([low, low - 0.001, CONTENT_MIN_SCORE + 0.0001]), 2)
 })
 
 async function toolsWith(strong: number, total: number, opts: { phrase?: boolean; names?: number } = {}) {

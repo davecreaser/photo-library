@@ -2,7 +2,8 @@
 //   node --experimental-strip-types calibrate-strength.mjs      (after ./download.sh)
 // For each of the 80 COCO object names as a query, the content matches (score >= CONTENT_MIN_SCORE,
 // scored as the app does: int8 cosine) are split by a rule into strong and weak, and COCO's labels
-// say which are right. Rules: a fraction of the best score; the biggest gap. Reports, for each
+// say which are right. Rules: a fraction of the best score; a fraction of the best margin above
+// CONTENT_MIN_SCORE (the one the app uses); the biggest gap. Reports, for each
 // setting, the precision of the strong and of the weak matches, and the share of right matches kept strong.
 // Vectors are cached (derived from COCO, never from the owner's photos).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -71,7 +72,11 @@ for (const c of categories) {
 }
 
 const rules = {}
-for (let f = 0.5; f <= 0.95; f += 0.05) rules[`fraction ${f.toFixed(2)}`] = (m) => m.findIndex((x) => x.s < f * m[0].s)
+const fractions = Array.from({ length: 10 }, (_, k) => 0.5 + k * 0.05)
+for (const f of fractions) rules[`fraction ${f.toFixed(2)}`] = (m) => m.findIndex((x) => x.s < f * m[0].s)
+// The fraction of the best match's margin above CONTENT_MIN_SCORE (what the app uses).
+const MIN = CONTENT_MIN_SCORE
+for (const f of fractions) rules[`margin ${f.toFixed(2)}`] = (m) => m.findIndex((x) => x.s - MIN < f * (m[0].s - MIN))
 rules['biggest gap'] = (m) => {
   let at = 0,
     gap = -1

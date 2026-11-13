@@ -29,21 +29,30 @@ export const CONTENT_MODEL_VERSION = 1
 export const CONTENT_MIN_SCORE = 0.0425
 
 /**
- * Of a search's content matches, the strong ones (spec 0011) score at least this fraction of the
- * best match's score; the rest are weak. A fraction rather than a number, so it adapts to the
- * phrase: some words score high for everything they match, others low. Fixed for the model,
- * never per library. Chosen on COCO val2017 (5,000 images, the 80 object names as queries,
- * COCO's labels as the truth; scripts/model-eval/calibrate-strength.mjs reproduces it). At 0.65
- * the strong matches are 91% right and hold 63% of all right matches, the weak ones 39% right
- * (all matches together: 61%); at 0.55 it is 83% / 80% / 30%, at 0.75 95% / 44% / 48%; the
- * biggest gap in the scores does worse (88% / 20%). Revisit with CONTENT_MIN_SCORE.
+ * Of a search's content matches, the strong ones (spec 0011) are above CONTENT_MIN_SCORE by at
+ * least this fraction of the best match's margin above it; the rest are weak. A fraction rather
+ * than a number, so it adapts to the phrase: some words score high for everything they match,
+ * others low. Measured from CONTENT_MIN_SCORE, not from 0, so a phrase whose best match is only
+ * just in still has weak matches. Fixed for the model, never per library. Chosen on COCO val2017
+ * (5,000 images, the 80 object names as queries, COCO's labels as the truth;
+ * scripts/model-eval/calibrate-strength.mjs reproduces it). At 0.65 the strong matches are 97%
+ * right and hold 34% of all right matches, the weak ones 51% right (all matches together: 61%);
+ * at 0.50 it is 94% / 53% / 44%, at 0.80 98% / 14% / 58%. A fraction of the raw score does
+ * slightly worse at the same precision (0.80: 97% / 32%), the biggest gap in the scores worse
+ * still (89% / 21%). The owner chose precision over recall: albums should hold only what was
+ * asked for, and the assistant can still take weak matches when asked for everything.
+ * Revisit with CONTENT_MIN_SCORE.
  */
 export const STRONG_FRACTION = 0.65
 
-/** How many of these content-match scores, best first, are strong: always the best one, so at least 1 unless there are none. */
+/**
+ * How many of these content-match scores, best first, are strong: those whose margin above
+ * CONTENT_MIN_SCORE is at least STRONG_FRACTION of the best one's. Always the best one, so at
+ * least 1 unless there are none.
+ */
 export function strongMatchCount(scores: number[]): number {
   if (scores.length === 0) return 0
-  const line = scores[0] * STRONG_FRACTION
+  const line = CONTENT_MIN_SCORE + (scores[0] - CONTENT_MIN_SCORE) * STRONG_FRACTION
   let n = 1
   while (n < scores.length && scores[n] >= line) n++
   return n

@@ -1,0 +1,11 @@
+# Security updates for npm come from Dependabot security updates (repo setting), not version bumps:
+# CI minutes are limited. Actions are pinned to commit SHAs, so keep those pins current monthly.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

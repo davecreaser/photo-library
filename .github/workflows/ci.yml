@@ -19,6 +19,9 @@ on:
         default: windows-latest
         options: [windows-latest, macos-latest, ubuntu-latest, all]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}-${{ inputs.os || 'pr' }}
   cancel-in-progress: true
@@ -33,9 +36,9 @@ jobs:
         os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["ubuntu-latest"]' || inputs.os == 'all' && '["ubuntu-latest", "windows-latest", "macos-latest"]' || format('["{0}"]', inputs.os)) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -44,7 +47,7 @@ jobs:
       # cache them so CI doesn't download them every run. Saved straight after install (not at the
       # end of the job), so a failing test doesn't throw the download away.
       - id: models
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: resources/models
           key: models-${{ runner.os }}-${{ hashFiles('src/main/modelFiles.json') }}
@@ -52,7 +55,7 @@ jobs:
       - run: npm ci
 
       - if: steps.models.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: resources/models
           key: models-${{ runner.os }}-${{ hashFiles('src/main/modelFiles.json') }}
@@ -69,7 +72,7 @@ jobs:
       - name: End-to-end tests (the real app, driven like a user)
         run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum' || '' }} npx playwright test
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: e2e-report-${{ matrix.os }}
